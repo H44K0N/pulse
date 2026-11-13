@@ -1,0 +1,31 @@
+# Pulse session server. Copy this file and .env (from .env.example) to the
+# host, e.g. /opt/pulse, then `docker compose up -d`. See DEPLOY.md.
+#
+# The port is published on loopback only: the public entry point is a
+# Cloudflare Tunnel or nginx on the same host, never Docker directly.
+
+services:
+  app:
+    image: ghcr.io/h44k0n/pulse-server:${PULSE_SERVER_IMAGE_TAG:-latest}
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - ./data:/data  # pulse.db (+ WAL files); must be writable by uid 10001
+    ports:
+      - "127.0.0.1:8200:8000"
+    # The app only writes to /data and temp files, so everything else is
+    # read-only and unprivileged.
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 256m
+    cpus: 0.5
+    pids_limit: 64
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
