@@ -9,7 +9,7 @@ Work in progress. See `docs/session-format.md` for the session data contract.
 ## Build and test
 
 Requirements: JDK 21 (JDK 17 is enough for `:core` alone) and the Android SDK with
-`platforms;android-36` (set `ANDROID_HOME`, or `sdk.dir` in `android/local.properties`).
+`platforms;android-37.0` (set `ANDROID_HOME`, or `sdk.dir` in `android/local.properties`).
 
 ```sh
 cd android

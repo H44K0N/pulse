@@ -10,7 +10,7 @@ class ContractTest {
         assertEquals(
             listOf(
                 "phase_start", "countdown", "ramp_nudge", "correction_high", "correction_low",
-                "interval_recap", "midway", "drift", "sensor_lost", "sensor_back",
+                "interval_recap", "hrr60", "midway", "drift", "sensor_lost", "sensor_back",
                 "session_summary", "hr_max_learned",
             ),
             EventType.entries.map { it.wireName },
