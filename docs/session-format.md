@@ -63,3 +63,10 @@ Field notes:
   `"correction_low"`, `"interval_recap"`, `"midway"`, `"drift"`, `"sensor_lost"`,
   `"sensor_back"`, `"session_summary"`, `"hr_max_learned"`. `text` is what was spoken.
 - Unknown extra fields must be accepted and preserved (forward compatibility).
+
+Extra fields currently sent by the Android app (allowed by the rule above):
+
+- `pauses`: `[{ "start_ms": 40000, "end_ms": 50000 }]`, periods the user paused the session.
+- `complete`: `false` when the app was killed mid-session and the session was saved from
+  what had been recorded so far (summary from raw samples, `time_in_target_ms` 0, no
+  `intervals`/`gaps`); `true` otherwise.
