@@ -27,7 +27,7 @@ import java.util.Locale
  *   then only shows in the system's "active apps" list).
  * - On Android 14+ the user can swipe this notification away; the session keeps running.
  * - Low importance channel: no sound or vibration on every update (the voice coach is the
- *   audio, from Milestone 3).
+ *   audio).
  */
 class SessionNotifications(private val context: Context) {
     private val manager = context.getSystemService(NotificationManager::class.java)
@@ -43,6 +43,8 @@ class SessionNotifications(private val context: Context) {
         mode: SessionMode,
         state: CoachingState?,
         sourceLabel: String,
+        /** Non-null when the voice coach is off (TTS failed); shown as a one-line warning. */
+        voiceProblem: String? = null,
     ): Notification {
         val openApp =
             PendingIntent.getActivity(
@@ -66,6 +68,7 @@ class SessionNotifications(private val context: Context) {
                 // Android 12+ may delay a foreground-service notification by up to 10 s; a
                 // workout should show its notification immediately.
                 .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
+        if (voiceProblem != null) builder.setSubText("Voice off: $voiceProblem")
         if (state != null && state.started && !state.finished) {
             if (state.paused) {
                 builder.addAction(0, "Resume", serviceAction(SessionService.ACTION_RESUME, REQUEST_RESUME))
@@ -109,6 +112,7 @@ class SessionNotifications(private val context: Context) {
 
     private fun text(state: CoachingState?, sourceLabel: String): String {
         if (state == null || !state.started) return "Connecting to $sourceLabel"
+        if (state.finished) return "Session complete"
         val parts = mutableListOf<String>()
         parts += if (state.sensorLost) "Sensor signal lost" else "HR ${state.smoothedHr ?: "--"}"
         state.phaseRemainingMs?.let { parts += "${formatDuration(it)} left" }

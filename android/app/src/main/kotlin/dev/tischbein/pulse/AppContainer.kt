@@ -3,6 +3,7 @@ package dev.tischbein.pulse
 import android.content.Context
 import android.util.Log
 import androidx.datastore.preferences.preferencesDataStore
+import dev.tischbein.pulse.coaching.SessionResult
 import dev.tischbein.pulse.data.SessionRepository
 import dev.tischbein.pulse.data.db.PulseDatabase
 import dev.tischbein.pulse.data.settings.SettingsRepository
@@ -37,6 +38,12 @@ class AppContainer(context: Context) {
 
     /** The session the foreground service is running, or null. Set by SessionService. */
     val activeSession = MutableStateFlow<ActiveSession?>(null)
+
+    /**
+     * The session that just ended, for the summary screen; cleared when the user leaves it.
+     * Only in memory: after a process restart the session is in the history (Milestone 4).
+     */
+    val finishedSession = MutableStateFlow<SessionResult?>(null)
 
     /** Housekeeping at process start: see SessionRepository.closeAbandonedSessions. */
     fun onAppStart(appStartEpochMs: Long) {
