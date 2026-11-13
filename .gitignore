@@ -1,0 +1,26 @@
+# Secrets: never commit (this repo is public)
+*.jks
+*.keystore
+keystore.properties
+.env
+*.env
+!*.env.example
+
+# Android / Gradle
+.gradle/
+build/
+local.properties
+.idea/
+*.iml
+captures/
+.externalNativeBuild/
+.cxx/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.coverage
+*.db
+*.sqlite3
