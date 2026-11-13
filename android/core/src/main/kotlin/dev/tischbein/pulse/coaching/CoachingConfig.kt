@@ -131,16 +131,20 @@ data class FourByFourConfig(
     /**
      * HRR60 = smoothed HR when the work interval ends minus smoothed HR this long after.
      * A bigger drop means better recovery. Measured on wall-clock time (HR keeps
-     * recovering during a pause).
+     * recovering during a pause), so the measurement and its cue happen [hrrDelayMs] after
+     * the interval ended even if the user paused in between.
      */
     val hrrDelayMs: Long = 60 * MS_PER_SECOND,
 
     /**
-     * From this interval's recap onward the recap also mentions the previous interval's
-     * HRR60. WHY "previous": HRR60 is measured 60 s into recovery, but the recap is spoken
-     * at the START of recovery, so the current interval's HRR60 does not exist yet.
+     * Speak HRR60 as its own cue ("Recovery: down 34 beats.") at the moment it is measured,
+     * i.e. [hrrDelayMs] into each recovery, for every interval. WHY its own cue and not part
+     * of the recap: the recap is spoken at the START of recovery, when the HRR60 of the
+     * interval just finished does not exist yet. A separate cue reports the fresh value
+     * instead of the previous interval's. No cue when HRR60 could not be measured (sensor
+     * gap) or the session ended first. Set to false to only record it.
      */
-    val recapHrrFromInterval: Int = 2,
+    val speakHrr60: Boolean = true,
 
     /** Midway feedback is spoken after this interval, comparing it with the one before. */
     val midwayAfterInterval: Int = 2,

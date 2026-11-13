@@ -60,8 +60,10 @@ Field notes:
 - `summary.drift_pct`: cardiac drift for easy sessions (second-half vs first-half avg HR,
   percent), else null.
 - `events.type`: `"phase_start"`, `"countdown"`, `"ramp_nudge"`, `"correction_high"`,
-  `"correction_low"`, `"interval_recap"`, `"midway"`, `"drift"`, `"sensor_lost"`,
+  `"correction_low"`, `"interval_recap"`, `"hrr60"`, `"midway"`, `"drift"`, `"sensor_lost"`,
   `"sensor_back"`, `"session_summary"`, `"hr_max_learned"`. `text` is what was spoken.
+  `hrr60` is spoken 60 s into each recovery (e.g. "Recovery: down 34 beats.") when it
+  could be measured; its value is also in `intervals[].hrr60`. Older sessions may lack it.
 - Unknown extra fields must be accepted and preserved (forward compatibility).
 
 Extra fields currently sent by the Android app (allowed by the rule above):

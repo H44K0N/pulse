@@ -431,9 +431,15 @@ class CoachingEngine(
         }
 
     /**
-     * HRR60: smoothed HR when the work interval ended minus smoothed HR 60 s later.
+     * HRR60: smoothed HR when the work interval ended minus smoothed HR 60 s later, then
+     * spoken as its own cue ("Recovery: down 34 beats.").
      * Smoothed values are used so one bad beat cannot fake a great (or awful) recovery.
-     * If either value is missing (sensor gap) the HRR60 stays null rather than guessed.
+     * If either value is missing (sensor gap) the HRR60 stays null rather than guessed, and
+     * nothing is said. If the session ends before the 60 s mark, it is never measured.
+     *
+     * Paused at the 60 s mark: the measurement runs on wall-clock time (HR recovers whether
+     * or not the workout timer runs), so it is still measured and spoken during the pause.
+     * The cue is information, not an instruction, so it is fine to hear it while paused.
      */
     private fun measureDueHrr(nowMs: Long) {
         val due = pendingHrr.filter { it.dueAtMs <= nowMs }
@@ -441,6 +447,7 @@ class CoachingEngine(
             val now = smoothedHr
             val hrr = if (pending.hrAtEnd != null && now != null) pending.hrAtEnd - now else null
             intervals[pending.intervalIndex] = intervals[pending.intervalIndex].copy(hrr60 = hrr)
+            if (hrr != null && fourByFour.speakHrr60) emit(nowMs, EventType.HRR60, Cues.hrr60(hrr))
         }
         pendingHrr.removeAll(due)
     }
@@ -448,9 +455,7 @@ class CoachingEngine(
     /** Spoken at the start of each recovery: recap of the interval just finished, then midway feedback after interval 2. */
     private fun speakRecapAndMidway(atMs: Long, number: Int) {
         val stats = intervals.last { it.number == number }
-        val previousHrr =
-            if (number >= fourByFour.recapHrrFromInterval) intervals.firstOrNull { it.number == number - 1 }?.hrr60 else null
-        emit(atMs, EventType.INTERVAL_RECAP, Cues.intervalRecap(number, stats.avgHr, stats.pctInZone, previousHrr))
+        emit(atMs, EventType.INTERVAL_RECAP, Cues.intervalRecap(number, stats.avgHr, stats.pctInZone))
 
         if (number == fourByFour.midwayAfterInterval) {
             val before = intervals.firstOrNull { it.number == number - 1 } ?: return

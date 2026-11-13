@@ -129,7 +129,7 @@ class FourByFourEngineTest {
     }
 
     @Test
-    fun `HRR60 is the smoothed drop 60 s after work ends and is spoken from interval 2`() {
+    fun `HRR60 is the smoothed drop 60 s after work ends and is spoken for every interval`() {
         val d = EngineDriver(FOUR_BY_FOUR)
         d.runToEnd(protocolHr(work = listOf(175, 175, 175, 175), recovery = 145))
 
@@ -138,16 +138,35 @@ class FourByFourEngineTest {
         assertEquals(listOf(175, 175, 175, 175), result.intervals.map { it.avgHr })
         assertEquals(listOf(175, 175, 175, 175), result.intervals.map { it.peakHr })
 
+        val hrrCues = d.events(EventType.HRR60)
+        assertEquals((1..4).map { sec(recoveryStartSec(it) + 60) }, hrrCues.map { it.tMs })
+        assertTrue(hrrCues.all { it.text == "Recovery: down 30 beats." }, hrrCues.toString())
+
+        // The recap at the start of recovery is about the interval just finished only.
         val recaps = d.events(EventType.INTERVAL_RECAP)
         assertEquals(4, recaps.size)
         assertEquals(sec(recoveryStartSec(1)), recaps[0].tMs)
-        assertTrue(recaps[0].text.matches(Regex("""Interval 1: average 175, \d+ percent in zone\.""")), recaps[0].text)
-        assertTrue(recaps[1].text.endsWith("Last recovery: down 30 beats in one minute."), recaps[1].text)
-        assertTrue(recaps[1].text.startsWith("Interval 2: average 175,"), recaps[1].text)
+        recaps.forEachIndexed { i, recap ->
+            assertTrue(recap.text.matches(Regex("""Interval ${i + 1}: average 175, \d+ percent in zone\.""")), recap.text)
+        }
     }
 
     @Test
-    fun `HRR60 is null when the sensor has no data at the 60 s mark`() {
+    fun `HRR60 cue reports each interval's own value`() {
+        val d = EngineDriver(FOUR_BY_FOUR)
+        val drops = listOf(20, 25, 34, 40)
+        d.runToEnd { t ->
+            val s = t / 1000
+            val n = ((s - 600) / 420).toInt()
+            if (s in 600 until 2280 && (s - 600) % 420 >= 240) 175 - drops[n] else protocolHr(work = listOf(175, 175, 175, 175))(t)
+        }
+        val result = assertNotNull(d.engine.result)
+        assertEquals(drops, result.intervals.map { it.hrr60 })
+        assertEquals(drops.map { "Recovery: down $it beats." }, d.events(EventType.HRR60).map { it.text })
+    }
+
+    @Test
+    fun `HRR60 is null and not spoken when the sensor has no data at the 60 s mark`() {
         val d = EngineDriver(FOUR_BY_FOUR)
         val base = protocolHr(work = listOf(175, 175, 175, 175), recovery = 145)
         val r1 = recoveryStartSec(1)
@@ -156,7 +175,35 @@ class FourByFourEngineTest {
         val result = assertNotNull(d.engine.result)
         assertNull(result.intervals[0].hrr60)
         assertEquals(30, result.intervals[1].hrr60)
-        assertTrue(d.events(EventType.INTERVAL_RECAP)[1].text.endsWith("percent in zone."))
+        assertEquals((2..4).map { sec(recoveryStartSec(it) + 60) }, d.eventTimes(EventType.HRR60))
+    }
+
+    @Test
+    fun `HRR60 is measured and spoken on wall-clock time even while paused`() {
+        val d = EngineDriver(FOUR_BY_FOUR)
+        val hr = protocolHr(work = listOf(175, 175, 175, 175), recovery = 145)
+        val r1 = recoveryStartSec(1)
+        d.runUntil(sec(r1 + 30), hr)
+        d.engine.pause(sec(r1 + 30))
+        d.runUntil(sec(r1 + 90)) { 145 }
+        assertEquals(listOf(sec(r1 + 60)), d.eventTimes(EventType.HRR60))
+        assertEquals(30, d.engine.end(sec(r1 + 90)).intervals[0].hrr60)
+    }
+
+    @Test
+    fun `HRR60 can be recorded without being spoken`() {
+        val config = CoachingConfig(fourByFour = FourByFourConfig(speakHrr60 = false))
+        val d = EngineDriver(FOUR_BY_FOUR, config)
+        d.runToEnd(protocolHr(work = listOf(175, 175, 175, 175), recovery = 145))
+        assertEquals(listOf(30, 30, 30, 30), assertNotNull(d.engine.result).intervals.map { it.hrr60 })
+        assertTrue(d.events(EventType.HRR60).isEmpty())
+    }
+
+    @Test
+    fun `HRR60 cue wording`() {
+        assertEquals("Recovery: down 34 beats.", Cues.hrr60(34))
+        assertEquals("Recovery: down 1 beat.", Cues.hrr60(1))
+        assertEquals("Recovery: up 3 beats.", Cues.hrr60(-3))
     }
 
     @Test
@@ -253,6 +300,7 @@ class FourByFourEngineTest {
         assertEquals(listOf(1, 2), result.intervals.map { it.number })
         assertEquals(30, result.intervals[0].hrr60)
         assertNull(result.intervals[1].hrr60) // interval 2 never ended normally
+        assertEquals(1, result.events.count { it.type == EventType.HRR60 }) // only interval 1's
         assertEquals(EventType.SESSION_SUMMARY, result.events.last().type)
         assertTrue(result.events.last().text.startsWith("Session complete. 18 minutes."))
         assertTrue(d.engine.isFinished)

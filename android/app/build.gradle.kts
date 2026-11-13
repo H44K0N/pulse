@@ -14,9 +14,10 @@ plugins {
 
 android {
     namespace = "dev.tischbein.pulse"
-    // 36 = newest platform installed on the build machine. Bump compileSdk and targetSdk
-    // together, then read the "behavior changes" page for that Android version.
-    compileSdk = 36
+    // compileSdk 37 (Android 17, SDK platform "android-37.0") only changes which APIs the
+    // compiler and lint know about; the newest AndroidX releases require it. It does not
+    // change how the app behaves on the phone (targetSdk does, see below).
+    compileSdk = 37
 
     defaultConfig {
         applicationId = "dev.tischbein.pulse"
@@ -24,6 +25,11 @@ android {
         // modern Bluetooth permissions (BLUETOOTH_SCAN/CONNECT, Android 12+) and the
         // notification permission (Android 13+) always apply: no legacy location-permission path.
         minSdk = 33
+        // Deliberately still 36 while compileSdk is 37. Raising targetSdk opts the app into
+        // Android 17's behaviour changes (background/foreground-service, Bluetooth and audio
+        // rules may differ), so it must wait until the owner has tested a 37 build on the
+        // real phone and strap. Then bump it and read the "behavior changes: apps targeting
+        // Android 17" page.
         targetSdk = 36
         versionCode = 1
         versionName = "0.2.0"

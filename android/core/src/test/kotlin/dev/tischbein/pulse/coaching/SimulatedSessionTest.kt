@@ -53,6 +53,7 @@ class SimulatedSessionTest {
         assertEquals(10, r.count(EventType.PHASE_START))
         assertEquals(12, r.count(EventType.COUNTDOWN))
         assertEquals(4, r.count(EventType.INTERVAL_RECAP))
+        assertTrue(r.events.filter { it.type == EventType.INTERVAL_RECAP }.none { "Recovery" in it.text || "recovery" in it.text })
         assertEquals(1, r.count(EventType.MIDWAY))
         assertEquals(EventType.SESSION_SUMMARY, r.events.last().type)
         assertEquals(4, r.intervals.size)
@@ -74,10 +75,9 @@ class SimulatedSessionTest {
             assertTrue(r.gaps.isEmpty())
             assertEquals(0, r.count(EventType.SENSOR_LOST))
             assertNull(r.summary.newHrMax)
-            // Recaps mention the previous recovery from interval 2 on.
-            val recaps = r.events.filter { it.type == EventType.INTERVAL_RECAP }
-            assertTrue("Last recovery" !in recaps[0].text)
-            assertTrue(recaps.drop(1).all { "Last recovery: down" in it.text })
+            // Every interval's recovery gets its own HRR60 cue with the measured value.
+            val hrrCues = r.events.filter { it.type == EventType.HRR60 }
+            assertEquals(r.intervals.map { "Recovery: down ${it.hrr60} beats." }, hrrCues.map { it.text })
         }
 
     @Test

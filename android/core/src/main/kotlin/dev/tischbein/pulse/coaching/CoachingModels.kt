@@ -37,6 +37,7 @@ enum class EventType(val wireName: String) {
     CORRECTION_HIGH("correction_high"),
     CORRECTION_LOW("correction_low"),
     INTERVAL_RECAP("interval_recap"),
+    HRR60("hrr60"),
     MIDWAY("midway"),
     DRIFT("drift"),
     SENSOR_LOST("sensor_lost"),

@@ -1,5 +1,6 @@
 package dev.tischbein.pulse.coaching
 
+import kotlin.math.abs
 import kotlin.math.roundToInt
 
 /**
@@ -28,18 +29,22 @@ object Cues {
     const val SENSOR_LOST = "Sensor signal lost."
     const val SENSOR_BACK = "Sensor back."
 
+    /** "Interval 2: average 172, 88 percent in zone." Spoken at the start of recovery. */
+    fun intervalRecap(number: Int, avgHr: Int?, pctInZone: Double): String =
+        if (avgHr == null) {
+            "Interval $number: no heart rate data."
+        } else {
+            "Interval $number: average $avgHr, ${pctInZone.roundToInt()} percent in zone."
+        }
+
     /**
-     * "Interval 2: average 172, 88 percent in zone." plus, when known, the HRR60 of the
-     * previous interval (see [FourByFourConfig.recapHrrFromInterval] for why "previous").
+     * "Recovery: down 34 beats." Spoken 60 s into each recovery (HRR60). A negative value
+     * (HR rose, e.g. a sprint into recovery) is said as "up" rather than "down minus".
      */
-    fun intervalRecap(number: Int, avgHr: Int?, pctInZone: Double, previousHrr60: Int?): String {
-        val main =
-            if (avgHr == null) {
-                "Interval $number: no heart rate data."
-            } else {
-                "Interval $number: average $avgHr, ${pctInZone.roundToInt()} percent in zone."
-            }
-        return if (previousHrr60 == null) main else "$main Last recovery: down $previousHrr60 beats in one minute."
+    fun hrr60(dropBpm: Int): String {
+        val beats = abs(dropBpm).toLong()
+        val direction = if (dropBpm >= 0) "down" else "up"
+        return "Recovery: $direction $beats ${plural(beats, "beat")}."
     }
 
     fun midwayHolding(intervalsLeft: Int) = "Holding steady. Same again for the last $intervalsLeft."
