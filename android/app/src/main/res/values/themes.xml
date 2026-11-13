@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Window theme only (status bar, background before Compose draws). Colors live in ui/theme/Theme.kt. -->
+    <style name="Theme.Pulse" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/background</item>
+    </style>
+</resources>

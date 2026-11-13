@@ -8,10 +8,40 @@ Work in progress. See `docs/session-format.md` for the session data contract.
 
 ## Build and test
 
-The coaching engine, sensor interface and simulator live in the pure Kotlin module
-`android/core` and are tested on the JVM (JDK 17+):
+Requirements: JDK 21 (JDK 17 is enough for `:core` alone) and the Android SDK with
+`platforms;android-36` (set `ANDROID_HOME`, or `sdk.dir` in `android/local.properties`).
 
 ```sh
 cd android
-./gradlew :core:check
+./gradlew :core:check :app:assembleDebug :app:lintDebug :app:testDebugUnitTest
 ```
+
+- `:core` is pure Kotlin: coaching engine, sensor interface, simulator. JVM tests only.
+- `:app` is the Android app. Its unit tests run on the JVM too (Room via Robolectric,
+  which downloads an Android runtime jar from Maven Central on the first run).
+- Every build runs `checkNoGooglePlayServices`, which fails if any dependency pulls in
+  Google Play Services or Firebase.
+- The debug APK ends up in `android/app/build/outputs/apk/debug/app-debug.apk`.
+
+## Install and try it
+
+1. Install the APK (`adb install -r app-debug.apk`, or copy it to the phone and open it;
+   allow "install unknown apps" for your file manager once).
+2. Open Pulse and grant "Nearby devices" (Bluetooth) and notifications.
+3. Without the strap: Settings > "Debug: simulator", pick a profile, Save. The home screen
+   shows "Simulator: <profile>"; choose a mode and Start.
+4. With the strap: put it on (it only wakes up with skin contact), tap
+   "Scan / connect H10" and pick it. Pulse remembers it and reconnects automatically the
+   next time the app is opened.
+5. If a session stops when the screen is off, set Pulse's battery usage to "Unrestricted"
+   (Settings > Battery in Pulse links to the right system page).
+
+## How a session is recorded
+
+A session runs in a foreground service (notification with heart rate, phase, Pause/End),
+so it keeps going with the screen off. Samples, cues and phases are written to the local
+database every 5 seconds. When the session ends, the complete result replaces them.
+
+If Android kills the app mid-session, the data up to the last write stays in the
+database. On the next start the session is marked **incomplete** (it is not resumed) and
+is exported with `"complete": false`.

@@ -1,0 +1,86 @@
+package dev.tischbein.pulse.data
+
+import dev.tischbein.pulse.coaching.SessionResult
+import dev.tischbein.pulse.data.db.EventEntity
+import dev.tischbein.pulse.data.db.PhaseEntity
+import dev.tischbein.pulse.data.db.SampleEntity
+import dev.tischbein.pulse.data.db.SessionDao
+import dev.tischbein.pulse.data.db.SessionEntity
+import dev.tischbein.pulse.data.db.SessionStatus
+import dev.tischbein.pulse.data.export.SessionJson
+import dev.tischbein.pulse.data.export.toDocument
+import kotlinx.coroutines.flow.Flow
+import kotlin.math.roundToInt
+
+/**
+ * All session storage goes through here (the rest of the app never touches the DAO).
+ *
+ * Recording lifecycle:
+ *  1. [startSession]: inserts the session row with status "recording".
+ *  2. [appendRecording]: called every few seconds by the SessionRecorder with the new
+ *     samples/events/phase changes. A crash loses at most the last unflushed batch.
+ *  3. [finishSession]: replaces the incremental rows with the engine's final SessionResult
+ *     and marks the session "complete".
+ *
+ * If the process dies between 1 and 3, the session stays "recording" in the database. On the
+ * next app start [closeAbandonedSessions] turns it into "incomplete" (it is never resumed:
+ * the coaching engine's in-memory state is gone, and a half-remembered 4x4 is worse than a new
+ * one). Its data up to the last flush is kept and it will be listed/synced like any other
+ * session, with `complete: false` in the JSON.
+ */
+class SessionRepository(private val dao: SessionDao) {
+    suspend fun startSession(session: SessionEntity) = dao.insertSession(session)
+
+    suspend fun appendRecording(samples: List<SampleEntity>, events: List<EventEntity>, phases: List<PhaseEntity>) {
+        if (samples.isEmpty() && events.isEmpty() && phases.isEmpty()) return
+        dao.appendRecording(samples, events, phases)
+    }
+
+    suspend fun finishSession(sessionId: String, result: SessionResult) {
+        val session = checkNotNull(dao.session(sessionId)) { "unknown session $sessionId" }
+        dao.replaceWithFinal(result.toStored(session))
+    }
+
+    /**
+     * Marks sessions that were still "recording" when the app died as "incomplete", with a
+     * best-effort summary from the stored samples (duration = last sample, average/max of the
+     * raw readings; time in target unknown = 0). Only touches sessions started before
+     * [startedBefore] (the app's start time), so a session that just started is never hit.
+     * Returns how many sessions were closed.
+     */
+    suspend fun closeAbandonedSessions(startedBefore: Long): Int {
+        val abandoned = dao.sessionsWithStatus(SessionStatus.RECORDING, startedBefore)
+        abandoned.forEach { markIncomplete(it) }
+        return abandoned.size
+    }
+
+    /** Marks one session "incomplete" (used directly when a session fails or its service is destroyed). */
+    suspend fun markIncomplete(sessionId: String) {
+        dao.session(sessionId)?.takeIf { it.status == SessionStatus.RECORDING }?.let { markIncomplete(it) }
+    }
+
+    private suspend fun markIncomplete(session: SessionEntity) {
+        val stats = dao.sampleStats(session.id)
+        val durationMs = stats.lastTMs ?: 0L
+        dao.closeOpenPhases(session.id, durationMs)
+        dao.updateSession(
+            session.copy(
+                status = SessionStatus.INCOMPLETE,
+                endedAtEpochMs = session.startedAtEpochMs + durationMs,
+                durationMs = durationMs,
+                avgHr = stats.avgHr?.roundToInt(),
+                maxHr = stats.maxHr,
+                timeInTargetMs = 0L,
+            ),
+        )
+    }
+
+    fun observeSessions(): Flow<List<SessionEntity>> = dao.observeSessions()
+
+    suspend fun session(sessionId: String): SessionEntity? = dao.session(sessionId)
+
+    suspend fun delete(sessionId: String) = dao.deleteSession(sessionId)
+
+    /** The session as the JSON document of docs/session-format.md (for sync in Milestone 5). */
+    suspend fun exportJson(sessionId: String): String? = dao.load(sessionId)?.let { SessionJson.encode(it.toDocument()) }
+}
