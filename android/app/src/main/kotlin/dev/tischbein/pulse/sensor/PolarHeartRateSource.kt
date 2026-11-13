@@ -11,9 +11,7 @@ import com.polar.sdk.api.PolarBleRecoveryAction
 import com.polar.sdk.api.model.PolarDeviceInfo
 import com.polar.sdk.api.model.PolarHealthThermometerData
 import dev.tischbein.pulse.time.MillisClock
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -21,7 +19,9 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 
@@ -60,15 +60,16 @@ internal fun polarReadingToSample(
  *   else to [scope] (main thread).
  * - Heart rate: `startHrStreaming(deviceId)` may only be called after the SDK reports the
  *   FEATURE_HR feature ready for that device. The stream ends (with an error) whenever the
- *   link drops.
+ *   link drops, and the SDK reports FEATURE_HR ready several times per (re)connection.
+ *   [HrStreamSupervisor] owns the subscription: one at a time, resubscribed after an error,
+ *   a completion or 5 s of silence (watchdog). Its KDoc explains the 0.3.0 bug this fixes.
  *
  * Reconnection (the SDK's mechanism, enabled with setAutomaticReconnection(true), which is
  * also its default): after a drop the SDK "parks" the device and reconnects on its own, both
  * by scanning (with Polar-specific scan filters, which Android allows with the screen off) and
- * with a background `autoConnect` GATT request. QUIRK: the HR stream does NOT come back by
- * itself after a reconnect. The SDK reports FEATURE_HR ready again, and we must call
- * startHrStreaming again; [onHrFeatureReady] does exactly that. Until then no samples arrive,
- * which the coaching engine sees as a sensor gap ("Sensor signal lost" after 10 s).
+ * with a background `autoConnect` GATT request. The HR stream does NOT come back by itself
+ * after a reconnect: the SDK reports FEATURE_HR ready again and the supervisor subscribes.
+ * Until data flows the coaching engine sees a sensor gap ("Sensor signal lost" after 10 s).
  *
  * The SDK instance is created on first use, because creating it touches Bluetooth, which needs
  * the BLUETOOTH_CONNECT permission (the UI asks for it before anything calls this class).
@@ -106,8 +107,32 @@ class PolarHeartRateSource(
     /** True between connect() and disconnect(): a drop in between means "reconnecting". */
     @Volatile private var wantConnected = false
 
-    private var hrStreamJob: Job? = null
     private var sdk: PolarBleApi? = null
+
+    private val hrStream =
+        HrStreamSupervisor(
+            scope = scope,
+            clock = clock,
+            opener = { id ->
+                flow {
+                    emitAll(
+                        api().startHrStreaming(id).map { data ->
+                            data.samples.map { HrReading(it.hr, it.rrsMs, it.contactStatusSupported, it.contactStatus) }
+                        },
+                    )
+                }
+            },
+            onReading = { r ->
+                contact.value = if (r.contactSupported) r.contact else null
+                // tryEmit: the buffer (64) never fills at ~1 reading/s; nothing to suspend for.
+                sampleFlow.tryEmit(polarReadingToSample(clock.nowMs(), r.hr, r.rrsMs, r.contactSupported, r.contact))
+            },
+            onRestart = { reason, detail, retryInMs ->
+                Log.w(TAG, "HR stream restart: $reason${detail?.let { " ($it)" } ?: ""}, resubscribing in $retryInMs ms")
+                // No data, so no idea about skin contact until the next reading.
+                contact.value = null
+            },
+        )
 
     private fun api(): PolarBleApi =
         sdk ?: PolarBleApiDefaultImpl
@@ -162,7 +187,7 @@ class PolarHeartRateSource(
 
     override fun disconnect() {
         wantConnected = false
-        stopHrStream()
+        hrStream.stop()
         val id = deviceId
         if (id != null && sdk != null) {
             try {
@@ -178,31 +203,6 @@ class PolarHeartRateSource(
     }
 
     private fun isOurs(id: String) = id == deviceId
-
-    private fun onHrFeatureReady(id: String) {
-        stopHrStream()
-        hrStreamJob =
-            scope.launch {
-                try {
-                    api().startHrStreaming(id).collect { data ->
-                        for (s in data.samples) {
-                            contact.value = if (s.contactStatusSupported) s.contactStatus else null
-                            sampleFlow.emit(polarReadingToSample(clock.nowMs(), s.hr, s.rrsMs, s.contactStatusSupported, s.contactStatus))
-                        }
-                    }
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (e: Exception) {
-                    // Normal when the link drops; the SDK reconnects and calls bleSdkFeatureReady again.
-                    Log.i(TAG, "HR stream ended: ${e.javaClass.simpleName} ${e.message}")
-                }
-            }
-    }
-
-    private fun stopHrStream() {
-        hrStreamJob?.cancel()
-        hrStreamJob = null
-    }
 
     private val callback =
         object : PolarBleApiCallback() {
@@ -232,15 +232,18 @@ class PolarHeartRateSource(
                         "Pairing problem: forget the H10 in Android's Bluetooth settings, " +
                         "then scan and connect again."
                 }
-                scope.launch { stopHrStream() }
+                scope.launch { hrStream.stop() }
                 contact.value = null
+                // Re-read by the SDK after reconnecting; a value from the old link would mislead.
+                battery.value = null
                 // The SDK's automatic reconnection is already running if we still want the strap.
                 connection.value = if (wantConnected) ConnectionState.CONNECTING else ConnectionState.DISCONNECTED
             }
 
             override fun bleSdkFeatureReady(identifier: String, feature: PolarBleApi.PolarBleSdkFeature) {
+                // Comes up to three times per connection; start() ignores the repeats.
                 if (feature == PolarBleApi.PolarBleSdkFeature.FEATURE_HR && isOurs(identifier) && wantConnected) {
-                    scope.launch { onHrFeatureReady(identifier) }
+                    scope.launch { if (wantConnected) hrStream.start(identifier) }
                 }
             }
 
@@ -257,6 +260,7 @@ class PolarHeartRateSource(
             override fun blePowerStateChanged(powered: Boolean) {
                 // Bluetooth switched off: the link is gone. The SDK reconnects when it is back on.
                 if (!powered && wantConnected) {
+                    scope.launch { hrStream.stop() }
                     connection.value = ConnectionState.CONNECTING
                     contact.value = null
                 }
