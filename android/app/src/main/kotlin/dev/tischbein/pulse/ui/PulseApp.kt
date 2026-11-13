@@ -22,7 +22,7 @@ private enum class Screen { HOME, SETTINGS }
 
 /**
  * Top-level screen switch. Deliberately no navigation library: four screens, chosen by state.
- * A running session always shows the session screen.
+ * A running session always shows the live screen; a just-finished one its summary.
  */
 @Composable
 fun PulseApp(container: AppContainer) {
@@ -34,20 +34,25 @@ fun PulseApp(container: AppContainer) {
         onPauseOrDispose { }
     }
     val active by container.activeSession.collectAsStateWithLifecycle()
+    val finished by container.finishedSession.collectAsStateWithLifecycle()
+    val device by container.sensors.status.collectAsStateWithLifecycle()
     var screen by rememberSaveable { mutableStateOf(Screen.HOME) }
 
     BackHandler(enabled = screen == Screen.SETTINGS) { screen = Screen.HOME }
+    BackHandler(enabled = active == null && finished != null) { container.finishedSession.value = null }
 
     Scaffold { padding ->
         Box(Modifier.fillMaxSize().padding(padding)) {
             val session = active
+            val result = finished
             when {
                 !bluetoothGranted ->
                     PermissionsScreen(onGranted = {
                         bluetoothGranted = true
                         container.appScope.launch { container.sensors.autoConnect() }
                     })
-                session != null -> SessionScreen(session)
+                session != null -> LiveScreen(session, device)
+                result != null -> SummaryScreen(result, onDone = { container.finishedSession.value = null })
                 screen == Screen.SETTINGS -> SettingsScreen(container, onDone = { screen = Screen.HOME })
                 else -> HomeScreen(container, onOpenSettings = { screen = Screen.SETTINGS })
             }

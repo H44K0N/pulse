@@ -9,12 +9,14 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -29,6 +31,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.tischbein.pulse.AppContainer
@@ -49,6 +52,8 @@ fun HomeScreen(
     val status by container.sensors.status.collectAsStateWithLifecycle()
     val settings by container.settings.settings.collectAsStateWithLifecycle(initialValue = null)
     var mode by rememberSaveable { mutableStateOf(SessionMode.INTERVAL_4X4) }
+    // Easy target in minutes as typed; null = not touched yet, use the Settings default.
+    var easyTargetText by rememberSaveable { mutableStateOf<String?>(null) }
     var scanning by remember { mutableStateOf(false) }
 
     Column(
@@ -75,6 +80,20 @@ fun HomeScreen(
         Text("Mode", style = MaterialTheme.typography.titleMedium)
         ModeOption("4x4 intervals", mode == SessionMode.INTERVAL_4X4) { mode = SessionMode.INTERVAL_4X4 }
         ModeOption("Easy / long", mode == SessionMode.EASY) { mode = SessionMode.EASY }
+        val easyTargetInput = easyTargetText ?: settings?.easyTargetMin?.takeIf { it > 0 }?.toString() ?: ""
+        val easyTargetMin = parseEasyTargetMin(easyTargetInput)
+        if (mode == SessionMode.EASY) {
+            OutlinedTextField(
+                value = easyTargetInput,
+                onValueChange = { easyTargetText = it.filter(Char::isDigit).take(3) },
+                label = { Text("Target duration, minutes (optional)") },
+                supportingText = { Text(if (easyTargetMin == null) "Up to $MAX_EASY_TARGET_MIN minutes" else "Empty = open-ended") },
+                isError = easyTargetMin == null,
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
 
         settings?.let { s ->
             val source = if (s.hrMaxOverride == null) "estimated from age ${s.age}" else if (s.hrMaxLearned) "learned" else "set manually"
@@ -82,7 +101,12 @@ fun HomeScreen(
         }
 
         val canStart = status.simulatorProfile != null || status.deviceId != null
-        Button(onClick = { SessionService.start(context, mode) }, enabled = canStart, modifier = Modifier.fillMaxWidth()) {
+        val inputOk = mode != SessionMode.EASY || easyTargetMin != null
+        Button(
+            onClick = { SessionService.start(context, mode, easyTargetMin.takeIf { mode == SessionMode.EASY }) },
+            enabled = canStart && inputOk,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
             Text("Start")
         }
         if (!canStart) Text("Connect an H10 first, or turn on the simulator in Settings.")
@@ -192,4 +216,12 @@ private fun ScanDialog(
         },
         confirmButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
+}
+
+private const val MAX_EASY_TARGET_MIN = 600
+
+/** "" -> 0 (open-ended), "45" -> 45, out of range -> null (invalid). Same limit as Settings. */
+fun parseEasyTargetMin(text: String): Int? {
+    if (text.isBlank()) return 0
+    return text.trim().toIntOrNull()?.takeIf { it in 0..MAX_EASY_TARGET_MIN }
 }

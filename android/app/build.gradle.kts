@@ -31,8 +31,8 @@ android {
         // real phone and strap. Then bump it and read the "behavior changes: apps targeting
         // Android 17" page.
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.2.0"
+        versionCode = 2
+        versionName = "0.3.0"
     }
 
     buildTypes {

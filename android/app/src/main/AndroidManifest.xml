@@ -55,6 +55,16 @@
         tools:node="remove" />
 
     <!--
+        Android 11+ package visibility: without this the app cannot see the phone's
+        text-to-speech engine, and TextToSpeech fails to initialise (no voice coach).
+    -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.TTS_SERVICE" />
+        </intent>
+    </queries>
+
+    <!--
         No cloud backup: the database holds health data and DataStore holds the server API
         token. allowBackup=false covers Android 12 and older behaviour; dataExtractionRules
         (Android 12+) says the same for cloud backup and allows moving to a new phone.

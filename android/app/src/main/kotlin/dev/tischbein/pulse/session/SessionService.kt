@@ -14,6 +14,7 @@ import dev.tischbein.pulse.coaching.CoachingEngine
 import dev.tischbein.pulse.coaching.CoachingRunner
 import dev.tischbein.pulse.coaching.CoachingState
 import dev.tischbein.pulse.coaching.MS_PER_HOUR
+import dev.tischbein.pulse.coaching.MS_PER_MINUTE
 import dev.tischbein.pulse.coaching.MS_PER_SECOND
 import dev.tischbein.pulse.coaching.SessionMode
 import dev.tischbein.pulse.coaching.SessionResult
@@ -23,6 +24,10 @@ import dev.tischbein.pulse.data.db.SessionEntity
 import dev.tischbein.pulse.data.db.SessionStatus
 import dev.tischbein.pulse.data.export.SettingsSnapshot
 import dev.tischbein.pulse.sensor.HeartRateSource
+import dev.tischbein.pulse.voice.AndroidSpeechPlatform
+import dev.tischbein.pulse.voice.VoiceCoach
+import dev.tischbein.pulse.voice.VoiceConstants
+import dev.tischbein.pulse.voice.VoiceStatus
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
@@ -36,6 +41,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import java.util.UUID
 
 /**
@@ -47,7 +53,11 @@ import java.util.UUID
  * started from the UI (an app in the foreground may start one; since Android 12 a background
  * app mostly may not), with type "connectedDevice" (see AndroidManifest.xml).
  *
- * One session at a time. The service stops itself when the session ends.
+ * One session at a time. The service stops itself when the session ends, after the voice
+ * coach has finished saying the summary (at most [VoiceConstants.END_DRAIN_TIMEOUT_MS]).
+ *
+ * Voice: each session gets its own [VoiceCoach] fed by the engine's events. The voice lives
+ * here, not in the UI, because the coach must keep talking with the screen off.
  *
  * Process death: the session's rows stay in Room with status "recording" and are marked
  * "incomplete" on the next app start (SessionRepository.closeAbandonedSessions). The service
@@ -66,6 +76,10 @@ class SessionService : Service() {
     private var active: ActiveSession? = null
     private var recorder: SessionRecorder? = null
     private var wakeLock: PowerManager.WakeLock? = null
+    private var voice: VoiceCoach? = null
+
+    /** Lets the finished session's voice finish its summary before the service stops. */
+    private var drainJob: Job? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -79,18 +93,22 @@ class SessionService : Service() {
         when (intent?.action) {
             ACTION_START -> {
                 val mode = intent.getStringExtra(EXTRA_MODE)?.let { SessionMode.valueOf(it) } ?: SessionMode.INTERVAL_4X4
-                start(mode)
+                val easyTargetMin = intent.getIntExtra(EXTRA_EASY_TARGET_MIN, -1).takeIf { it >= 0 }
+                start(mode, easyTargetMin)
             }
             ACTION_PAUSE -> active?.pause()
             ACTION_RESUME -> active?.resume()
             ACTION_END -> active?.end()
         }
         // A notification button pressed after the session ended would create an idle service.
-        if (sessionJob == null) stopSelf(startId)
+        if (sessionJob == null && drainJob?.isActive != true) stopSelf(startId)
         return START_NOT_STICKY
     }
 
-    private fun start(mode: SessionMode) {
+    private fun start(
+        mode: SessionMode,
+        easyTargetMin: Int?,
+    ) {
         // startForegroundService() obliges us to call startForeground() within a few seconds,
         // on every start request, or Android crashes the app. So call it first, always.
         try {
@@ -110,13 +128,23 @@ class SessionService : Service() {
         }
         if (sessionJob != null) return // a session is already running
         acquireWakeLock()
-        sessionJob = scope.launch { runSession(mode) }
+        val previousDrain = drainJob
+        sessionJob = scope.launch { runSession(mode, easyTargetMin) }
+        // The previous session may still be saying its summary: the new session cuts it
+        // short. Cancelled only after sessionJob is set, so the drain does not stop the service.
+        previousDrain?.cancel()
     }
 
-    private suspend fun runSession(mode: SessionMode) {
+    private suspend fun runSession(
+        mode: SessionMode,
+        easyTargetMin: Int?,
+    ) {
         val settings = container.settings.current()
         val config = settings.toCoachingConfig()
-        val setup = SessionSetup(mode, settings.hrMax, settings.easyTargetDurationMs.takeIf { mode == SessionMode.EASY })
+        // Easy target: what the start screen chose (0 = open-ended), else the Settings default.
+        val easyTargetMs =
+            if (easyTargetMin != null) easyTargetMin.takeIf { it > 0 }?.let { it * MS_PER_MINUTE } else settings.easyTargetDurationMs
+        val setup = SessionSetup(mode, settings.hrMax, easyTargetMs.takeIf { mode == SessionMode.EASY })
         val engine = CoachingEngine(setup, config)
         val runner = CoachingRunner(engine, container.clock)
         val source = container.sensors.sourceForSession(settings, config, scope)
@@ -139,7 +167,10 @@ class SessionService : Service() {
             )
         val recorder = SessionRecorder(container.sessions, sessionId, startClockMs, container.clock)
         this.recorder = recorder
-        val active = ActiveSession(sessionId, mode, sourceLabel, engine.state, runner)
+        // Created first so TTS can initialise while the sensor connects.
+        val voice = VoiceCoach(AndroidSpeechPlatform(this), container.clock, scope) { Log.i(TAG, it) }
+        this.voice = voice
+        val active = ActiveSession(sessionId, mode, setup.easyTargetDurationMs, sourceLabel, engine.state, voice.status, runner)
         this.active = active
         Log.i(TAG, "session $sessionId started: $mode, hrMax=${setup.hrMax}, source=$sourceLabel")
 
@@ -147,11 +178,14 @@ class SessionService : Service() {
         try {
             container.sessions.startSession(session)
             container.activeSession.value = active
-            result = record(engine, runner, source, recorder, active)
+            result = record(engine, runner, source, recorder, active, voice)
             withContext(NonCancellable) {
                 container.sessions.finishSession(sessionId, result)
                 result.summary.newHrMax?.let { container.settings.applyLearnedHrMax(it) }
             }
+            // Summary screen now; the voice is meanwhile saying the summary (see finishService).
+            container.finishedSession.value = result
+            notifications.update(notifications.build(mode, engine.state.value, sourceLabel))
             Log.i(TAG, "session $sessionId finished: ${result.summary}")
         } catch (e: CancellationException) {
             throw e
@@ -168,7 +202,7 @@ class SessionService : Service() {
                 }
             }
             if (simulated) source.disconnect()
-            finishService()
+            finishService(drainVoice = result != null)
         }
     }
 
@@ -179,16 +213,19 @@ class SessionService : Service() {
         source: HeartRateSource,
         recorder: SessionRecorder,
         active: ActiveSession,
+        voice: VoiceCoach,
     ): SessionResult =
         coroutineScope {
+            var eventsHandled = 0
             // UNDISPATCHED: subscribed before the engine starts, so its first cue is not missed.
             val helpers =
                 launch(start = CoroutineStart.UNDISPATCHED) {
                     launch(start = CoroutineStart.UNDISPATCHED) {
                         engine.events.collect { event ->
-                            // Milestone 3 speaks these; for now they are logged and stored.
                             Log.i(TAG, "cue ${event.type.wireName}: ${event.text}")
                             recorder.onEvent(event)
+                            voice.say(event)
+                            eventsHandled++
                         }
                     }
                     launch(start = CoroutineStart.UNDISPATCHED) {
@@ -196,6 +233,10 @@ class SessionService : Service() {
                             recorder.onState(state)
                             updateNotificationThrottled(active, state)
                         }
+                    }
+                    launch {
+                        // "Voice off" must reach the notification even if the state is quiet.
+                        voice.status.collect { updateNotificationThrottled(active, engine.state.value) }
                     }
                     launch {
                         while (true) {
@@ -208,6 +249,10 @@ class SessionService : Service() {
             source.connect()
             val result = runner.run(source.samples.onEach { recorder.onSample(it) })
             helpers.cancel()
+            // The last cues (summary, HRmax) are emitted in the same step that finishes the
+            // engine; if the collector had not got to them yet, speak them from the result so
+            // the summary is never lost. (Room gets them from the result anyway.)
+            result.events.drop(eventsHandled).forEach { voice.say(it) }
             result
         }
 
@@ -220,21 +265,24 @@ class SessionService : Service() {
      * otherwise at most every [NOTIFICATION_INTERVAL_MS].
      */
     private fun updateNotificationThrottled(active: ActiveSession, state: CoachingState) {
-        val key = listOf(state.phaseKind, state.intervalNumber, state.paused, state.sensorLost)
+        val voiceStatus = active.voice.value
+        val key = listOf(state.phaseKind, state.intervalNumber, state.paused, state.sensorLost, state.finished, voiceStatus)
         val now = container.clock.nowMs()
         if (key == lastNotifiedKey && now - lastNotifiedAtMs < NOTIFICATION_INTERVAL_MS) return
         lastNotifiedKey = key
         lastNotifiedAtMs = now
-        notifications.update(notifications.build(active.mode, state, active.sourceLabel))
+        val voiceProblem = (voiceStatus as? VoiceStatus.Unavailable)?.reason
+        notifications.update(notifications.build(active.mode, state, active.sourceLabel, voiceProblem))
     }
 
     /**
      * Partial wake lock = CPU stays on, screen may turn off. Without it the phone can doze
      * between Bluetooth packets and the engine's 1 s tick (phase changes, "sensor lost" after
-     * 10 s of silence, Milestone 3's voice) would run late. The timeout is a safety net: a bug
+     * 10 s of silence, the voice cues) would run late. The timeout is a safety net: a bug
      * can never keep the phone awake forever.
      */
     private fun acquireWakeLock() {
+        if (wakeLock?.isHeld == true) return // still held while the previous session's voice drains
         val powerManager = getSystemService(PowerManager::class.java)
         wakeLock =
             powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Pulse:session").apply {
@@ -243,11 +291,35 @@ class SessionService : Service() {
             }
     }
 
-    private fun finishService() {
+    /**
+     * The session is over: the UI leaves the live screen at once. With [drainVoice] the
+     * service (foreground, wake lock) stays up until the voice has said the summary, at most
+     * [VoiceConstants.END_DRAIN_TIMEOUT_MS]; stopping right away would cut the summary off,
+     * and a backgrounded app without a foreground service may be frozen mid-sentence with
+     * the music still ducked.
+     */
+    private fun finishService(drainVoice: Boolean) {
         container.activeSession.value = null
         active = null
         recorder = null
         sessionJob = null
+        val finishedVoice = voice
+        voice = null
+        drainJob =
+            scope.launch {
+                try {
+                    if (drainVoice && finishedVoice != null) {
+                        withTimeoutOrNull(VoiceConstants.END_DRAIN_TIMEOUT_MS) { finishedVoice.awaitIdle() }
+                    }
+                } finally {
+                    finishedVoice?.shutdown()
+                    // A new session may have started meanwhile; it owns the service then.
+                    if (sessionJob == null) stopService()
+                }
+            }
+    }
+
+    private fun stopService() {
         wakeLock?.let { if (it.isHeld) it.release() }
         wakeLock = null
         ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
@@ -270,6 +342,8 @@ class SessionService : Service() {
             container.activeSession.value = null
         }
         wakeLock?.let { if (it.isHeld) it.release() }
+        // Frees the TTS engine and audio focus (whatever was still queued is not said).
+        voice?.shutdown()
         scope.cancel()
         super.onDestroy()
     }
@@ -280,6 +354,7 @@ class SessionService : Service() {
         const val ACTION_RESUME = "dev.tischbein.pulse.session.RESUME"
         const val ACTION_END = "dev.tischbein.pulse.session.END"
         private const val EXTRA_MODE = "mode"
+        private const val EXTRA_EASY_TARGET_MIN = "easy_target_min"
         private const val TAG = "Pulse/Session"
 
         /** How often recorded data is written to Room: the most a crash can lose. */
@@ -287,9 +362,17 @@ class SessionService : Service() {
         private const val NOTIFICATION_INTERVAL_MS = 5 * MS_PER_SECOND
         private const val WAKE_LOCK_TIMEOUT_MS = 6 * MS_PER_HOUR
 
-        /** Starts a session. Call from the UI (the app must be in the foreground). */
-        fun start(context: Context, mode: SessionMode) {
+        /**
+         * Starts a session. Call from the UI (the app must be in the foreground).
+         * [easyTargetMin]: easy mode target in minutes, 0 = open-ended, null = Settings default.
+         */
+        fun start(
+            context: Context,
+            mode: SessionMode,
+            easyTargetMin: Int? = null,
+        ) {
             val intent = Intent(context, SessionService::class.java).setAction(ACTION_START).putExtra(EXTRA_MODE, mode.name)
+            easyTargetMin?.let { intent.putExtra(EXTRA_EASY_TARGET_MIN, it) }
             ContextCompat.startForegroundService(context, intent)
         }
     }
