@@ -1,0 +1,26 @@
+# Version catalog: the ONLY place dependency and plugin versions are written.
+#
+# Compatibility (checked 2026-11 against the official tables):
+#   - Kotlin Gradle plugin 2.4.20-2.4.21 supports Gradle 7.6.3-9.7.0 and AGP 8.5.2-9.3.1
+#     (https://kotlinlang.org/docs/gradle-configure-project.html).
+#   - AGP 9.3 requires Gradle >= 9.5.0 and JDK 17+
+#     (https://developer.android.com/build/releases/about-agp).
+#   So: Gradle 9.7.1 (wrapper), Kotlin 2.4.21, AGP 9.3.3 is the newest fully supported set.
+#   AGP 9.5 / Gradle 9.9 exist but are outside Kotlin 2.4's tested range; bump them
+#   together with Kotlin 2.5.0 once it is stable.
+[versions]
+agp = "9.3.3"
+kotlin = "2.4.21"
+coroutines = "1.11.0"
+
+[libraries]
+kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "coroutines" }
+kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "coroutines" }
+kotlin-test-junit = { module = "org.jetbrains.kotlin:kotlin-test-junit", version.ref = "kotlin" }
+
+[plugins]
+kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
+# Declared for Milestone 2 (:app). AGP 9 has built-in Kotlin support, so :app does not
+# need the separate kotlin-android plugin; Compose needs the Kotlin compose compiler plugin.
+android-application = { id = "com.android.application", version.ref = "agp" }
+kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }

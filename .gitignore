@@ -8,6 +8,7 @@ keystore.properties
 
 # Android / Gradle
 .gradle/
+.kotlin/
 build/
 local.properties
 .idea/
