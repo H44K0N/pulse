@@ -1,0 +1,17 @@
+# Tool configuration only; the server is not packaged. Dependencies live in
+# requirements.txt / requirements-dev.txt.
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+
+[tool.ruff]
+target-version = "py313"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "B", "UP", "S", "SIM", "RUF"]
+ignore = []
+
+[tool.ruff.lint.per-file-ignores]
+# assert is how pytest works; tests use fixed fake tokens.
+"tests/*" = ["S101", "S105", "S106"]
