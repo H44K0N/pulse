@@ -95,7 +95,7 @@ fun whenText(
     zone: ZoneId,
 ): String {
     val t = Instant.ofEpochMilli(epochMs).atZone(zone)
-    val today = LocalDate.ofInstant(Instant.ofEpochMilli(nowMs), zone)
+    val today = Instant.ofEpochMilli(nowMs).atZone(zone).toLocalDate() // (LocalDate.ofInstant needs API 34)
     return when (t.toLocalDate()) {
         today -> "today ${TIME.format(t)}"
         today.minusDays(1) -> "yesterday ${TIME.format(t)}"
