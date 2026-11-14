@@ -51,3 +51,19 @@ val MIGRATION_1_2 =
             }
         }
     }
+
+/**
+ * 2 -> 3 (Milestone 5): upload state per session. The column defaults do the back-fill: every
+ * existing session becomes "pending" with no attempts, so the whole history is uploaded once
+ * sync is configured. A session still "recording" is pending too, but the uploader skips it
+ * until it is closed (complete or incomplete). The SQL matches app/schemas/.../3.json.
+ */
+val MIGRATION_2_3 =
+    object : Migration(2, 3) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL("ALTER TABLE sessions ADD COLUMN syncState TEXT NOT NULL DEFAULT '${SyncState.PENDING}'")
+            db.execSQL("ALTER TABLE sessions ADD COLUMN syncError TEXT")
+            db.execSQL("ALTER TABLE sessions ADD COLUMN syncAttemptAtEpochMs INTEGER")
+            db.execSQL("ALTER TABLE sessions ADD COLUMN syncAttempts INTEGER NOT NULL DEFAULT 0")
+        }
+    }

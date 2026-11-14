@@ -17,6 +17,10 @@ import dev.tischbein.pulse.ui.ProgressContent
 import dev.tischbein.pulse.ui.SessionDetailContent
 import dev.tischbein.pulse.data.SessionDigest
 import dev.tischbein.pulse.ui.SettingsContent
+import dev.tischbein.pulse.ui.syncPanel
+import dev.tischbein.pulse.data.db.SyncOverview
+import dev.tischbein.pulse.data.db.SyncState
+import dev.tischbein.pulse.data.sync.ConnectionCheck
 import dev.tischbein.pulse.ui.SettingsSection
 import dev.tischbein.pulse.ui.TrainContent
 import dev.tischbein.pulse.ui.MainFrame
@@ -207,9 +211,10 @@ class DesignMockups {
     /** "Show all": every session. */
     @Test
     fun c13_progressSessions() {
-        val history = MockData.history().map { it.first }
+        val history = MockData.history().map { it.first.copy(syncState = SyncState.SYNCED) }
         val todaySession = SessionDigest.of("today", MockData.simRun(SimProfile.GOOD_4X4).result, todayStart)
-        val rows = sessionRows(history + todaySession, MockData.zone)
+        // Sync on: today's session is still waiting for a connection (quiet grey mark), the rest are on the server.
+        val rows = sessionRows(history + todaySession.copy(syncState = SyncState.PENDING), MockData.zone, syncConfigured = true)
         shot("13-progress-sessions") { AllSessionsContent(rows) }
     }
 
@@ -231,15 +236,24 @@ class DesignMockups {
     @Test
     fun d16_settings() = shot("16-settings") { MainFrame(Destination.SETTINGS) { m -> SettingsContent(MockData.settings, m) } }
 
-    /** Every group opened, simulator on. */
+    /** Every group opened, simulator on, sync on with two sessions waiting after a connection test. */
     @Test
-    @Config(qualifiers = "+h2200dp")
-    fun d17_settingsFull() =
+    @Config(qualifiers = "+h2300dp")
+    fun d17_settingsFull() {
+        val now = todayStart + 18 * 3_600_000L
+        val sync = syncPanel(true, SyncOverview(pending = 2, lastSyncedAtEpochMs = now - 26 * 3_600_000L), now, MockData.zone)
         shot("17-settings-full") {
             FullPage(Destination.SETTINGS) {
-                SettingsContent(MockData.settings.copy(simulatorEnabled = true, serverUrl = "https://pulse.example.com", apiToken = "not-a-real-token"), scrollable = false, initialOpen = SettingsSection.entries.toSet())
+                SettingsContent(
+                    MockData.settings.copy(simulatorEnabled = true, serverUrl = "https://pulse.example.com", apiToken = "not-a-real-token"),
+                    scrollable = false,
+                    initialOpen = SettingsSection.entries.toSet(),
+                    sync = sync,
+                    connectionCheck = ConnectionCheck.OK,
+                )
             }
         }
+    }
 
     /** Whole page, content then the bottom bar, on a tall canvas (trimmed afterwards). */
     @Composable

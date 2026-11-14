@@ -9,6 +9,8 @@ import dev.tischbein.pulse.data.db.SampleEntity
 import dev.tischbein.pulse.data.db.SessionDao
 import dev.tischbein.pulse.data.db.SessionEntity
 import dev.tischbein.pulse.data.db.SessionStatus
+import dev.tischbein.pulse.data.db.SyncOverview
+import dev.tischbein.pulse.data.db.SyncState
 import dev.tischbein.pulse.data.export.SessionJson
 import dev.tischbein.pulse.data.export.toDocument
 import kotlinx.coroutines.flow.Flow
@@ -30,6 +32,9 @@ import kotlin.math.roundToInt
  * the coaching engine's in-memory state is gone, and a half-remembered 4x4 is worse than a new
  * one). Its data up to the last flush is kept and it will be listed/synced like any other
  * session, with `complete: false` in the JSON.
+ *
+ * Sync: a new row starts "pending"; once the session is finished the uploader sends it and
+ * marks it "synced" (or "failed" if the server rejects it for good). See data/sync.
  */
 class SessionRepository(private val dao: SessionDao) {
     suspend fun startSession(session: SessionEntity) = dao.insertSession(session)
@@ -101,12 +106,34 @@ class SessionRepository(private val dao: SessionDao) {
     /** Deletes the session and (cascade) all its samples, events, phases, ... */
     suspend fun delete(sessionId: String) = dao.deleteSession(sessionId)
 
-    /** The session as the JSON document of docs/session-format.md (for sync in Milestone 5). */
+    /** The session as the JSON document of docs/session-format.md (what the uploader sends). */
     suspend fun exportJson(sessionId: String): String? = dao.load(sessionId)?.let { SessionJson.encode(it.toDocument()) }
+
+    // ---- Sync state (written by data/sync/SessionUploader) ----
+
+    /** Ids of the finished sessions not on the server yet, oldest first. */
+    suspend fun pendingUploads(): List<String> = dao.pendingUploadIds()
+
+    suspend fun markSynced(sessionId: String, atEpochMs: Long) = dao.markSynced(sessionId, atEpochMs)
+
+    /** A failed attempt that will be retried (no connection, wrong token, server error). */
+    suspend fun markUploadRetry(sessionId: String, error: String, atEpochMs: Long) = dao.recordSyncFailure(sessionId, SyncState.PENDING, error, atEpochMs)
+
+    /** The server rejected this session for good; it is not retried automatically. */
+    suspend fun markUploadRejected(sessionId: String, error: String, atEpochMs: Long) = dao.recordSyncFailure(sessionId, SyncState.FAILED, error, atEpochMs)
+
+    /** Everything synced or rejected becomes pending again (a different server was configured). */
+    suspend fun resetAllSync(): Int = dao.resetSync(listOf(SyncState.SYNCED, SyncState.FAILED))
+
+    /** Rejected sessions get one more try ("Sync now": the server may have been fixed meanwhile). */
+    suspend fun retryRejected(): Int = dao.resetSync(listOf(SyncState.FAILED))
+
+    fun observeSyncOverview(): Flow<SyncOverview> = dao.observeSyncOverview()
 }
 
 /** A stored session for the detail screen: the row (dates, device, status) and its data. */
 class LoadedSession(val entity: SessionEntity, val result: SessionResult) {
     val complete: Boolean get() = entity.status == SessionStatus.COMPLETE
     val simulated: Boolean get() = entity.deviceKind == DeviceKind.SIMULATOR
+    val syncState: String get() = entity.syncState
 }

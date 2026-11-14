@@ -268,6 +268,10 @@ fun SessionRowView(
                     Spacer(Modifier.width(8.dp))
                     Tag("Incomplete", color = Pulse.warning)
                 }
+                r.sync?.let {
+                    Spacer(Modifier.width(8.dp))
+                    SyncTag(it)
+                }
             }
             Text(r.date, fontFamily = InterText, fontSize = 12.sp, color = Pulse.textLow, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Spacer(Modifier.height(6.dp))
@@ -287,4 +291,10 @@ private fun MiniStat(
     unit: String?,
 ) {
     ValueUnit(value, unit, PulseType.smallNumber.copy(fontSize = 13.sp), Pulse.textMid, unitSize = 11.sp, unitColor = Pulse.textLow)
+}
+
+/** "Not synced" (quiet grey) or "Upload failed" (warning), next to a session's title. */
+@Composable
+fun SyncTag(badge: SyncBadge) {
+    Tag(badge.label, color = if (badge == SyncBadge.REJECTED) Pulse.warning else Pulse.textLow)
 }

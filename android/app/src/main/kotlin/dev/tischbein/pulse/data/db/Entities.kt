@@ -1,5 +1,6 @@
 package dev.tischbein.pulse.data.db
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.ForeignKey
 import androidx.room.Index
@@ -27,6 +28,22 @@ object SessionStatus {
 
     /** The app was killed mid-session. Samples/events/phases up to the last flush are kept. */
     const val INCOMPLETE = "incomplete"
+}
+
+/**
+ * Upload state of a session (column `sessions.syncState`, schema version 3). Only finished
+ * sessions (complete or incomplete) are ever uploaded; a "recording" row stays "pending" until
+ * it is closed. See data/sync/SessionUploader.
+ */
+object SyncState {
+    /** Not on the server yet: waiting for a connection, a working token, or the next retry. */
+    const val PENDING = "pending"
+
+    /** The server answered 201 (stored) or 200 (already stored). Never uploaded again. */
+    const val SYNCED = "synced"
+
+    /** The server rejected this document for good (413 too large / 422 invalid); not retried automatically. */
+    const val FAILED = "failed"
 }
 
 object DeviceKind {
@@ -63,6 +80,15 @@ data class SessionEntity(
     val workPctInZone: Double? = null,
     /** Downsampled HR, "120,121,,130" (empty = gap); null while recording. */
     val sparkline: String? = null,
+    // Upload to the server (schema version 3). Written only by targeted UPDATEs in SessionDao.
+    /** One of [SyncState]. */
+    @ColumnInfo(defaultValue = SyncState.PENDING) val syncState: String = SyncState.PENDING,
+    /** Why the last upload attempt did not succeed (user-facing text), null after success. */
+    val syncError: String? = null,
+    /** Wall-clock time of the last upload attempt (successful or not). */
+    val syncAttemptAtEpochMs: Long? = null,
+    /** Upload attempts so far (for diagnosis; the retry timing is WorkManager's backoff). */
+    @ColumnInfo(defaultValue = "0") val syncAttempts: Int = 0,
 )
 
 @Entity(

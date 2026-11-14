@@ -74,7 +74,10 @@ fun SessionDetailContent(
                 Spacer(Modifier.height(4.dp))
                 Text(d.title, fontFamily = InterDisplay, fontWeight = FontWeight.Bold, fontSize = 30.sp, color = Pulse.text)
             }
-            if (!d.complete) Tag("Incomplete", color = Pulse.warning)
+            Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                if (!d.complete) Tag("Incomplete", color = Pulse.warning)
+                d.sync?.let { SyncTag(it) }
+            }
         }
 
         // Hero: time in zone, then three basics.

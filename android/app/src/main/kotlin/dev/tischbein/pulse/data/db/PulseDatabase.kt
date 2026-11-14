@@ -13,13 +13,14 @@ import androidx.room.RoomDatabase
  * test it in MigrationTest, and never edit an already-committed schema file.
  *
  * History: 1 = Milestone 2 (recording). 2 = Milestone 4 (per-session digest columns).
+ * 3 = Milestone 5 (per-session sync state).
  */
 @Database(
     entities = [
         SessionEntity::class, SampleEntity::class, EventEntity::class, PhaseEntity::class,
         IntervalEntity::class, GapEntity::class, PauseEntity::class,
     ],
-    version = 2,
+    version = 3,
     exportSchema = true,
 )
 abstract class PulseDatabase : RoomDatabase() {
@@ -29,7 +30,7 @@ abstract class PulseDatabase : RoomDatabase() {
         fun open(context: Context): PulseDatabase =
             Room
                 .databaseBuilder(context.applicationContext, PulseDatabase::class.java, "pulse.db")
-                .addMigrations(MIGRATION_1_2)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
                 .build()
     }
 }

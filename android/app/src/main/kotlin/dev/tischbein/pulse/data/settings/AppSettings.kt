@@ -1,11 +1,13 @@
 package dev.tischbein.pulse.data.settings
 
+import dev.tischbein.pulse.BuildConfig
 import dev.tischbein.pulse.coaching.CoachingConfig
 import dev.tischbein.pulse.coaching.EasyConfig
 import dev.tischbein.pulse.coaching.FourByFourConfig
 import dev.tischbein.pulse.coaching.MS_PER_MINUTE
 import dev.tischbein.pulse.coaching.ZonePercent
 import dev.tischbein.pulse.coaching.estimateHrMax
+import dev.tischbein.pulse.data.sync.ServerUrl
 import dev.tischbein.pulse.sensor.sim.SimProfile
 import kotlin.math.roundToInt
 
@@ -80,8 +82,15 @@ data class AppSettings(
         )
     }
 
-    /** Problems that would make a session nonsensical; empty = OK to save. */
-    fun validationErrors(): List<String> =
+    /**
+     * Sync is on when both the server URL and the token are filled in and the URL is usable.
+     * Otherwise the app works offline and says nothing about sync.
+     */
+    fun syncConfigured(allowLocalHttp: Boolean = BuildConfig.DEBUG): Boolean =
+        serverUrl.isNotBlank() && apiToken.isNotBlank() && ServerUrl.problem(serverUrl, allowLocalHttp) == null
+
+    /** Problems that would make a session nonsensical (or a URL unusable); empty = OK to save. */
+    fun validationErrors(allowLocalHttp: Boolean = BuildConfig.DEBUG): List<String> =
         buildList {
             if (age !in AGE_RANGE) add("Age must be ${AGE_RANGE.first}-${AGE_RANGE.last}")
             hrMaxOverride?.let { if (it !in HR_MAX_RANGE) add("HRmax must be ${HR_MAX_RANGE.first}-${HR_MAX_RANGE.last}") }
@@ -93,7 +102,7 @@ data class AppSettings(
                 .filterValues { !it.isValid }
                 .keys
                 .forEach { add("$it zone: low must be below high (percent of HRmax)") }
-            serverUrlError(serverUrl)?.let { add(it) }
+            ServerUrl.problem(serverUrl, allowLocalHttp)?.let { add(it) }
         }
 
     // A data class prints every field; the token must never end up in a log or crash report.
@@ -120,9 +129,6 @@ data class AppSettings(
         /** Zone sliders cover this much of HRmax, in %. */
         val ZONE_PCT_RANGE = 40..100
 
-        /** Empty (sync off) or an http(s) URL; null = OK. */
-        fun serverUrlError(url: String): String? =
-            if (url.isEmpty() || url.startsWith("https://") || url.startsWith("http://")) null else "Server URL must start with https://"
         private val DEFAULT_4X4 = FourByFourConfig()
 
         private fun minutes(ms: Long): Int = (ms / MS_PER_MINUTE).toInt()

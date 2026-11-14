@@ -38,14 +38,21 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import dev.tischbein.pulse.BuildConfig
 import dev.tischbein.pulse.coaching.estimateHrMax
 import dev.tischbein.pulse.data.settings.AppSettings
 import dev.tischbein.pulse.data.settings.ZoneSetting
+import dev.tischbein.pulse.data.sync.ConnectionCheck
+import dev.tischbein.pulse.data.sync.ServerUrl
 import dev.tischbein.pulse.sensor.sim.SimProfile
 import dev.tischbein.pulse.ui.design.CardShape
+import dev.tischbein.pulse.ui.design.Icon
 import dev.tischbein.pulse.ui.design.PulseCard
+import dev.tischbein.pulse.ui.design.PulseIcon
 import dev.tischbein.pulse.ui.design.RowDivider
 import dev.tischbein.pulse.ui.design.ScreenPadding
 import dev.tischbein.pulse.ui.design.SectionTitle
@@ -68,7 +75,7 @@ enum class SettingsSection { WORKOUT, SYNC, DEVELOPER }
  * limits in AppSettings, so most values cannot be invalid; the server URL is checked as typed.
  *
  * Most used on top (heart rate, strap); the rest in collapsed groups: Workout (protocol and
- * zones), Sync (server), Developer (simulator).
+ * zones), Sync (server, see [SyncPanel]), Developer (simulator).
  */
 @Composable
 fun SettingsContent(
@@ -77,10 +84,15 @@ fun SettingsContent(
     scrollable: Boolean = true,
     batteryOptimised: Boolean = false,
     initialOpen: Set<SettingsSection> = emptySet(),
+    sync: SyncPanel = SyncPanel.OFF,
+    connectionCheck: ConnectionCheck? = null,
+    checking: Boolean = false,
     onChange: (AppSettings) -> Unit = {},
     onFindStrap: () -> Unit = {},
     onForgetStrap: () -> Unit = {},
     onFixBattery: () -> Unit = {},
+    onTestConnection: () -> Unit = {},
+    onSyncNow: () -> Unit = {},
 ) {
     var open by rememberSaveable { mutableStateOf(initialOpen.map { it.name }.toSet()) }
     fun toggle(section: SettingsSection) {
@@ -150,8 +162,14 @@ fun SettingsContent(
         Collapsible("Workout", "4×4 protocol, zones", SettingsSection.WORKOUT.name in open, { toggle(SettingsSection.WORKOUT) }) {
             WorkoutSettings(s, onChange)
         }
-        Collapsible("Sync", if (s.serverUrl.isEmpty()) "Off" else s.serverUrl, SettingsSection.SYNC.name in open, { toggle(SettingsSection.SYNC) }) {
-            SyncSettings(s, onChange)
+        Collapsible(
+            "Sync",
+            sync.summary,
+            SettingsSection.SYNC.name in open,
+            { toggle(SettingsSection.SYNC) },
+            summaryColor = if (sync.attention) Pulse.warning else Pulse.textLow,
+        ) {
+            SyncSettings(s, sync, connectionCheck, checking, onChange, onTestConnection, onSyncNow)
         }
         Collapsible(
             "Developer",
@@ -187,6 +205,7 @@ private fun Collapsible(
     summary: String,
     open: Boolean,
     onToggle: () -> Unit,
+    summaryColor: Color = Pulse.textLow,
     content: @Composable () -> Unit,
 ) {
     Column(Modifier.fillMaxWidth().clip(CardShape).background(Pulse.surface)) {
@@ -196,7 +215,7 @@ private fun Collapsible(
         ) {
             Column(Modifier.weight(1f)) {
                 Text(title, fontFamily = InterText, fontWeight = FontWeight.SemiBold, fontSize = 16.sp, color = Pulse.text)
-                Text(summary, fontFamily = InterText, fontSize = 12.sp, color = Pulse.textLow, maxLines = 1)
+                Text(summary, fontFamily = InterText, fontSize = 12.sp, color = summaryColor, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             Text(if (open) "▴" else "▾", fontSize = 18.sp, color = Pulse.textMid)
         }
@@ -298,15 +317,29 @@ private fun fieldColors() =
         cursorColor = Pulse.accent,
     )
 
+/**
+ * Server URL, token (masked, with show/hide), "Test connection", and when sync is on: last
+ * sync, sessions waiting, what is wrong (if anything), "Sync now".
+ */
 @Composable
 private fun SyncSettings(
     s: AppSettings,
+    sync: SyncPanel,
+    check: ConnectionCheck?,
+    checking: Boolean,
     onChange: (AppSettings) -> Unit,
+    onTestConnection: () -> Unit,
+    onSyncNow: () -> Unit,
 ) {
-    val urlError = AppSettings.serverUrlError(s.serverUrl)
+    val urlError = ServerUrl.problem(s.serverUrl, allowLocalHttp = BuildConfig.DEBUG)
+    var showToken by rememberSaveable { mutableStateOf(false) }
     Spacer(Modifier.height(12.dp))
     Text(
-        "Upload arrives in a later version; until then nothing leaves the phone.",
+        if (sync.configured) {
+            "Finished sessions are uploaded to your server when the phone is online."
+        } else {
+            "Uploads finished sessions to your own Pulse server. Until a URL and token are set, nothing leaves the phone."
+        },
         fontFamily = InterText,
         fontSize = 12.sp,
         color = Pulse.textLow,
@@ -320,23 +353,62 @@ private fun SyncSettings(
         isError = urlError != null,
         supportingText = urlError?.let { { Text(it) } },
         singleLine = true,
-        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, autoCorrectEnabled = false),
         colors = fieldColors(),
         modifier = Modifier.fillMaxWidth(),
     )
     Spacer(Modifier.height(8.dp))
     OutlinedTextField(
         value = s.apiToken,
+        // Trimmed: a pasted token often brings a trailing newline or space.
         onValueChange = { onChange(s.copy(apiToken = it.trim())) },
         label = { Text("API token") },
         singleLine = true,
-        // Masked: the token is a password for the server.
-        visualTransformation = PasswordVisualTransformation(),
-        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+        // Masked by default: the token is the server's password. The eye shows it to check a paste.
+        visualTransformation = if (showToken) VisualTransformation.None else PasswordVisualTransformation(),
+        keyboardOptions = KeyboardOptions(keyboardType = if (showToken) KeyboardType.Ascii else KeyboardType.Password, autoCorrectEnabled = false),
+        trailingIcon = {
+            Box(
+                Modifier.clip(CircleShape).clickable(onClickLabel = if (showToken) "Hide token" else "Show token") { showToken = !showToken }.padding(10.dp),
+            ) {
+                Icon(if (showToken) PulseIcon.EYE_OFF else PulseIcon.EYE, Pulse.textMid, size = 20.dp)
+            }
+        },
         colors = fieldColors(),
         modifier = Modifier.fillMaxWidth(),
     )
+    Row(Modifier.fillMaxWidth().padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+        LinkText(if (checking) "Testing…" else "Test connection") { if (!checking) onTestConnection() }
+        Spacer(Modifier.weight(1f))
+        if (sync.configured) LinkText("Sync now", onClick = onSyncNow)
+    }
+    if (check != null && !checking) {
+        Text(
+            check.message,
+            fontFamily = InterText,
+            fontSize = 13.sp,
+            color = if (check == ConnectionCheck.OK) Pulse.accent else Pulse.warning,
+            modifier = Modifier.padding(bottom = 6.dp),
+        )
+    }
+    if (sync.configured) {
+        RowDivider()
+        sync.lastSync?.let { SettingRow("Last sync") { StatusValue(it) } }
+        sync.waiting?.let { SettingRow("Waiting to upload") { StatusValue(it) } }
+        sync.problem?.let { WarningText(it) }
+        sync.rejected?.let { WarningText(it) }
+    }
     Spacer(Modifier.height(8.dp))
+}
+
+@Composable
+private fun StatusValue(text: String) {
+    Text(text, fontFamily = InterText, fontSize = 14.sp, color = Pulse.textMid, maxLines = 1)
+}
+
+@Composable
+private fun WarningText(text: String) {
+    Text(text, fontFamily = InterText, fontSize = 13.sp, color = Pulse.warning, modifier = Modifier.padding(vertical = 6.dp))
 }
 
 @Composable

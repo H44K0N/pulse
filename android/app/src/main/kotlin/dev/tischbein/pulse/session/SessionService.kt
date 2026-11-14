@@ -22,6 +22,7 @@ import dev.tischbein.pulse.data.db.DeviceKind
 import dev.tischbein.pulse.data.db.SessionEntity
 import dev.tischbein.pulse.data.db.SessionStatus
 import dev.tischbein.pulse.data.export.SettingsSnapshot
+import dev.tischbein.pulse.data.sync.SyncTrigger
 import dev.tischbein.pulse.sensor.HeartRateSource
 import dev.tischbein.pulse.voice.AndroidSpeechPlatform
 import dev.tischbein.pulse.voice.VoiceCoach
@@ -202,6 +203,8 @@ class SessionService : Service() {
                     }
                 }
             }
+            // Finished (complete or marked incomplete): upload it when online.
+            container.requestSync(SyncTrigger.SESSION_FINISHED)
             if (simulated) source.disconnect()
             finishService(drainVoice = result != null)
         }
@@ -347,6 +350,7 @@ class SessionService : Service() {
                     pending.flush()
                     container.sessions.markIncomplete(running.id)
                 }
+                container.requestSync(SyncTrigger.SESSION_FINISHED)
             }
             container.activeSession.value = null
         }

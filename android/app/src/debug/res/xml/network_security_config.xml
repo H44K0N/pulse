@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    DEBUG BUILDS ONLY (overrides src/main/res/xml/network_security_config.xml).
+    Same as release, plus plain http:// to the developer's own machine, for testing against a
+    local server: localhost / 127.0.0.1 (a phone with `adb reverse tcp:8000 tcp:8000`) and
+    10.0.2.2 (the host as seen from the Android emulator). Everything else stays HTTPS only.
+    The app checks the same list before sending anything (data/sync/ServerUrl.kt).
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">localhost</domain>
+        <domain includeSubdomains="false">127.0.0.1</domain>
+        <domain includeSubdomains="false">10.0.2.2</domain>
+    </domain-config>
+</network-security-config>

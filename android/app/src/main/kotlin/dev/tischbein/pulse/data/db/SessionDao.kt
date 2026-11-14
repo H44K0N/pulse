@@ -11,6 +11,24 @@ import kotlinx.coroutines.flow.Flow
 /** Summary numbers computed from the raw samples (used for sessions that never finished). */
 data class SampleStats(val lastTMs: Long?, val avgHr: Double?, val maxHr: Int?)
 
+/**
+ * Sync status for Settings, from the `sessions` table.
+ *
+ * @property pending finished sessions not on the server yet.
+ * @property failed sessions the server rejected for good (413/422).
+ * @property lastSyncedAtEpochMs most recent successful upload, null if none (or all deleted).
+ * @property lastError why the most recent failed attempt of a still-pending session failed.
+ * @property rejectedReason the server's reason for the most recently rejected session.
+ */
+data class SyncOverview(
+    val pending: Int = 0,
+    val failed: Int = 0,
+    val lastSyncedAtEpochMs: Long? = null,
+    val lastError: String? = null,
+    val lastErrorAtEpochMs: Long? = null,
+    val rejectedReason: String? = null,
+)
+
 /** Everything stored for one session, for export and the session detail screen. */
 data class StoredSession(
     val session: SessionEntity,
@@ -148,6 +166,39 @@ abstract class SessionDao {
 
     @Query("SELECT MAX(tMs) AS lastTMs, AVG(hr) AS avgHr, MAX(hr) AS maxHr FROM samples WHERE sessionId = :id")
     abstract suspend fun sampleStats(id: String): SampleStats
+
+    // ---- Sync (see data/sync/SessionUploader). Targeted UPDATEs, so they never overwrite the
+    // session data, and the session data writes above never run on a finished session. ----
+
+    /** Finished sessions waiting for upload, oldest first. A session being recorded is never listed. */
+    @Query("SELECT id FROM sessions WHERE syncState = 'pending' AND status != 'recording' ORDER BY startedAtEpochMs, id")
+    abstract suspend fun pendingUploadIds(): List<String>
+
+    @Query("UPDATE sessions SET syncState = 'synced', syncError = NULL, syncAttemptAtEpochMs = :atMs, syncAttempts = syncAttempts + 1 WHERE id = :id")
+    abstract suspend fun markSynced(id: String, atMs: Long)
+
+    /** A failed attempt: [state] stays "pending" (retry later) or becomes "failed" (rejected for good). */
+    @Query("UPDATE sessions SET syncState = :state, syncError = :error, syncAttemptAtEpochMs = :atMs, syncAttempts = syncAttempts + 1 WHERE id = :id")
+    abstract suspend fun recordSyncFailure(id: String, state: String, error: String, atMs: Long)
+
+    /** Sets every session in one of [states] back to "pending". Returns how many changed. */
+    @Query("UPDATE sessions SET syncState = 'pending', syncError = NULL WHERE syncState IN (:states)")
+    abstract suspend fun resetSync(states: List<String>): Int
+
+    @Query(
+        """
+        SELECT
+          (SELECT COUNT(*) FROM sessions WHERE syncState = 'pending' AND status != 'recording') AS pending,
+          (SELECT COUNT(*) FROM sessions WHERE syncState = 'failed') AS failed,
+          (SELECT MAX(syncAttemptAtEpochMs) FROM sessions WHERE syncState = 'synced') AS lastSyncedAtEpochMs,
+          (SELECT syncError FROM sessions WHERE syncState = 'pending' AND status != 'recording' AND syncError IS NOT NULL
+             ORDER BY syncAttemptAtEpochMs DESC LIMIT 1) AS lastError,
+          (SELECT MAX(syncAttemptAtEpochMs) FROM sessions WHERE syncState = 'pending' AND status != 'recording' AND syncError IS NOT NULL)
+             AS lastErrorAtEpochMs,
+          (SELECT syncError FROM sessions WHERE syncState = 'failed' ORDER BY syncAttemptAtEpochMs DESC LIMIT 1) AS rejectedReason
+        """,
+    )
+    abstract fun observeSyncOverview(): Flow<SyncOverview>
 
     @Transaction
     open suspend fun load(id: String): StoredSession? {

@@ -50,4 +50,28 @@ object AppConstants {
 
     /** Settings save this long after the last change (one write per burst of taps). */
     const val SETTINGS_AUTOSAVE_DEBOUNCE_MS: Long = 600L
+
+    // ---- Sync (data/sync) --------------------------------------------------------------
+
+    /** Time allowed to open the connection to the server (DNS + TCP + TLS). */
+    const val SYNC_CONNECT_TIMEOUT_MS: Int = 15_000
+
+    /** Time allowed between bytes of the server's answer (a big session is ~1 MB to send). */
+    const val SYNC_READ_TIMEOUT_MS: Int = 30_000
+
+    /** First retry after a failed upload; WorkManager doubles it each time, up to 5 hours. */
+    const val SYNC_BACKOFF_INITIAL_MS: Long = 60 * MS_PER_SECOND
+
+    /**
+     * After the server URL or token is edited, sync waits this long. The settings autosave
+     * while typing, so without the wait a half-typed URL ("https://pulse-api.tisch") could
+     * receive the token; with it, only the URL that stays in the field is used.
+     */
+    const val SYNC_SETTINGS_SETTLE_MS: Long = 20 * MS_PER_SECOND
+
+    /** At most this much of a server's answer is read and kept (error details are short). */
+    const val SYNC_MAX_RESPONSE_CHARS: Int = 4_096
+
+    /** At most this much of a rejection reason is stored with the session and shown. */
+    const val SYNC_MAX_ERROR_CHARS: Int = 300
 }

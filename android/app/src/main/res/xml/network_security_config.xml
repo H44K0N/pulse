@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Release builds: HTTPS only, to anything (the only destination is the owner's server, see
+    AndroidManifest.xml), trusting only the system's certificate authorities (no user-installed
+    CAs, so a profile-installed CA cannot intercept the upload).
+    Debug builds replace this file with src/debug/res/xml/network_security_config.xml.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>
