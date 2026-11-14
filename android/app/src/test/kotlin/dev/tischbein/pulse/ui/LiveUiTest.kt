@@ -1,6 +1,7 @@
 package dev.tischbein.pulse.ui
 
 import dev.tischbein.pulse.coaching.CoachingState
+import dev.tischbein.pulse.coaching.FourByFourConfig
 import dev.tischbein.pulse.coaching.MS_PER_MINUTE
 import dev.tischbein.pulse.coaching.PhaseKind
 import dev.tischbein.pulse.coaching.SessionMode
@@ -12,7 +13,6 @@ import dev.tischbein.pulse.session.formatDuration
 import dev.tischbein.pulse.voice.VoiceStatus
 import org.junit.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class LiveUiTest {
@@ -39,13 +39,9 @@ class LiveUiTest {
     @Test
     fun `4x4 work interval`() {
         val ui = liveUi(work2, VoiceStatus.Ready)
-        assertEquals("172", ui.hrText)
         assertEquals(ZoneIndicator.IN, ui.zone)
         assertEquals("Interval 2", ui.phaseTitle)
-        assertEquals("3:12 left", ui.remainingText)
-        assertEquals("Interval 2 of 4", ui.progressText)
-        assertEquals("Target 162-181", ui.targetText)
-        assertNull(ui.voiceWarning)
+        assertEquals(false, ui.voiceOff)
     }
 
     @Test
@@ -59,34 +55,35 @@ class LiveUiTest {
     }
 
     @Test
-    fun `unknown HR shows dashes, paused and voice problems are visible`() {
+    fun `sensor lost, paused and voice problems are visible`() {
         val ui =
             liveUi(
                 work2.copy(smoothedHr = null, zoneState = ZoneState.UNKNOWN, sensorLost = true, paused = true),
                 VoiceStatus.Unavailable("No English text-to-speech voice installed"),
             )
-        assertEquals("--", ui.hrText)
         assertEquals(ZoneIndicator.NO_SIGNAL, ui.zone)
         assertTrue(ui.paused)
-        assertEquals("Voice off: No English text-to-speech voice installed", ui.voiceWarning)
+        assertTrue(ui.voiceOff)
     }
 
     @Test
     fun `before the first phase it says starting`() {
         val ui = liveUi(work2.copy(started = false, phaseKind = null, intervalNumber = null), VoiceStatus.Starting)
-        assertEquals("Starting...", ui.phaseTitle)
-        assertNull(ui.progressText)
+        assertEquals("Starting…", ui.phaseTitle)
     }
 
     @Test
     fun `easy mode shows elapsed and target, even past the target`() {
         val easy =
             work2.copy(mode = SessionMode.EASY, phaseKind = PhaseKind.EASY, intervalNumber = null, intervalCount = null, phaseRemainingMs = 0)
-        val ui = liveUi(easy.copy(elapsedActiveMs = 46 * MS_PER_MINUTE), VoiceStatus.Ready, easyTargetMs = 45 * MS_PER_MINUTE)
-        assertEquals("Easy run", ui.phaseTitle)
-        assertEquals("46:00 / 45:00", ui.progressText)
-        assertNull(ui.remainingText)
-        assertEquals("20:00", liveUi(easy.copy(phaseRemainingMs = null), VoiceStatus.Ready).progressText)
+        val d = liveDashboard(easy.copy(elapsedActiveMs = 46 * MS_PER_MINUTE), VoiceStatus.Ready, strap, FourByFourConfig(), emptyList(), easyTargetMs = 45 * MS_PER_MINUTE)
+        assertEquals("Easy run", d.ui.phaseTitle)
+        assertEquals("46:00", d.bigTime)
+        assertEquals("of 45:00", d.bigTimeLabel)
+        assertEquals(1f, d.timelinePosition)
+        val open = liveDashboard(easy, VoiceStatus.Ready, strap, FourByFourConfig(), emptyList())
+        assertEquals("elapsed", open.bigTimeLabel)
+        assertTrue(open.timeline.isEmpty())
     }
 
     @Test
@@ -105,20 +102,16 @@ class LiveUiTest {
     }
 
     @Test
-    fun `status row`() {
-        val strap = DeviceStatus(null, "A1B2C3D4", ConnectionState.CONNECTED, 80, true)
-        assertEquals(listOf("Battery 80 %", "Contact OK", "Saved on phone"), statusItems(strap))
-        assertEquals(
-            listOf("Strap connecting", "NO CONTACT", "Saved on phone"),
-            statusItems(strap.copy(connection = ConnectionState.CONNECTING, skinContact = false)),
-        )
-        assertEquals(listOf("Simulator", "Saved on phone"), statusItems(strap.copy(simulatorProfile = SimProfile.GOOD_4X4)))
+    fun `warnings only appear when something is wrong`() {
+        fun warnings(device: DeviceStatus, voice: VoiceStatus = VoiceStatus.Ready, state: CoachingState = work2) =
+            liveDashboard(state, voice, device, FourByFourConfig(), emptyList()).warnings.map { it.text }
+        assertEquals(emptyList(), warnings(strap))
+        assertEquals(listOf("Strap battery 15 %"), warnings(strap.copy(batteryPercent = 15)))
+        assertEquals(listOf("Reconnecting", "No skin contact"), warnings(strap.copy(connection = ConnectionState.CONNECTING, skinContact = false)))
+        // While the signal is lost the big "Reconnecting…" says it already.
+        assertEquals(emptyList(), warnings(strap.copy(connection = ConnectionState.CONNECTING), state = work2.copy(zoneState = ZoneState.UNKNOWN, sensorLost = true)))
+        assertEquals(listOf("Simulator", "Voice off"), warnings(strap.copy(simulatorProfile = SimProfile.GOOD_4X4, batteryPercent = 5), VoiceStatus.Unavailable("x")))
     }
 
-    @Test
-    fun `easy target input`() {
-        assertEquals(0, parseEasyTargetMin(""))
-        assertEquals(45, parseEasyTargetMin("45"))
-        assertNull(parseEasyTargetMin("601"))
-    }
+    private val strap = DeviceStatus(null, "A1B2C3D4", ConnectionState.CONNECTED, 80, true)
 }

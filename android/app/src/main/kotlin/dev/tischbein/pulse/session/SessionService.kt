@@ -9,13 +9,12 @@ import android.os.PowerManager
 import android.util.Log
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
+import dev.tischbein.pulse.AppConstants
 import dev.tischbein.pulse.PulseApplication
 import dev.tischbein.pulse.coaching.CoachingEngine
 import dev.tischbein.pulse.coaching.CoachingRunner
 import dev.tischbein.pulse.coaching.CoachingState
-import dev.tischbein.pulse.coaching.MS_PER_HOUR
 import dev.tischbein.pulse.coaching.MS_PER_MINUTE
-import dev.tischbein.pulse.coaching.MS_PER_SECOND
 import dev.tischbein.pulse.coaching.SessionMode
 import dev.tischbein.pulse.coaching.SessionResult
 import dev.tischbein.pulse.coaching.SessionSetup
@@ -167,10 +166,11 @@ class SessionService : Service() {
             )
         val recorder = SessionRecorder(container.sessions, sessionId, startClockMs, container.clock)
         this.recorder = recorder
+        val liveHr = LiveHrBuffer(startClockMs)
         // Created first so TTS can initialise while the sensor connects.
         val voice = VoiceCoach(AndroidSpeechPlatform(this), container.clock, scope) { Log.i(TAG, it) }
         this.voice = voice
-        val active = ActiveSession(sessionId, mode, setup.easyTargetDurationMs, sourceLabel, engine.state, voice.status, runner)
+        val active = ActiveSession(sessionId, mode, setup.easyTargetDurationMs, sourceLabel, config, engine.state, voice.status, liveHr.state, runner)
         this.active = active
         Log.i(TAG, "session $sessionId started: $mode, hrMax=${setup.hrMax}, source=$sourceLabel")
 
@@ -178,13 +178,14 @@ class SessionService : Service() {
         try {
             container.sessions.startSession(session)
             container.activeSession.value = active
-            result = record(engine, runner, source, recorder, active, voice)
+            result = record(engine, runner, source, recorder, liveHr, active, voice)
             withContext(NonCancellable) {
                 container.sessions.finishSession(sessionId, result)
                 result.summary.newHrMax?.let { container.settings.applyLearnedHrMax(it) }
             }
-            // Summary screen now; the voice is meanwhile saying the summary (see finishService).
-            container.finishedSession.value = result
+            // Summary screen now (read back from Room by id); the voice is meanwhile saying
+            // the summary (see finishService).
+            container.finishedSessionId.value = sessionId
             notifications.update(notifications.build(mode, engine.state.value, sourceLabel))
             Log.i(TAG, "session $sessionId finished: ${result.summary}")
         } catch (e: CancellationException) {
@@ -212,6 +213,7 @@ class SessionService : Service() {
         runner: CoachingRunner,
         source: HeartRateSource,
         recorder: SessionRecorder,
+        liveHr: LiveHrBuffer,
         active: ActiveSession,
         voice: VoiceCoach,
     ): SessionResult =
@@ -231,6 +233,7 @@ class SessionService : Service() {
                     launch(start = CoroutineStart.UNDISPATCHED) {
                         engine.state.collect { state ->
                             recorder.onState(state)
+                            liveHr.onState(state, container.clock.nowMs())
                             updateNotificationThrottled(active, state)
                         }
                     }
@@ -240,14 +243,20 @@ class SessionService : Service() {
                     }
                     launch {
                         while (true) {
-                            delay(FLUSH_INTERVAL_MS)
+                            delay(AppConstants.FLUSH_INTERVAL_MS)
                             recorder.flush()
                         }
                     }
                 }
             // connect() is a no-op if the strap is already connected (it usually is).
             source.connect()
-            val result = runner.run(source.samples.onEach { recorder.onSample(it) })
+            val result =
+                runner.run(
+                    source.samples.onEach {
+                        recorder.onSample(it)
+                        liveHr.onSample(it)
+                    },
+                )
             helpers.cancel()
             // The last cues (summary, HRmax) are emitted in the same step that finishes the
             // engine; if the collector had not got to them yet, speak them from the result so
@@ -262,13 +271,13 @@ class SessionService : Service() {
     /**
      * Android silently drops notification updates from apps that post too often, and every
      * update costs battery. So: update immediately when the phase or pause state changes,
-     * otherwise at most every [NOTIFICATION_INTERVAL_MS].
+     * otherwise at most every [AppConstants.NOTIFICATION_INTERVAL_MS].
      */
     private fun updateNotificationThrottled(active: ActiveSession, state: CoachingState) {
         val voiceStatus = active.voice.value
         val key = listOf(state.phaseKind, state.intervalNumber, state.paused, state.sensorLost, state.finished, voiceStatus)
         val now = container.clock.nowMs()
-        if (key == lastNotifiedKey && now - lastNotifiedAtMs < NOTIFICATION_INTERVAL_MS) return
+        if (key == lastNotifiedKey && now - lastNotifiedAtMs < AppConstants.NOTIFICATION_INTERVAL_MS) return
         lastNotifiedKey = key
         lastNotifiedAtMs = now
         val voiceProblem = (voiceStatus as? VoiceStatus.Unavailable)?.reason
@@ -287,7 +296,7 @@ class SessionService : Service() {
         wakeLock =
             powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Pulse:session").apply {
                 setReferenceCounted(false)
-                acquire(WAKE_LOCK_TIMEOUT_MS)
+                acquire(AppConstants.WAKE_LOCK_TIMEOUT_MS)
             }
     }
 
@@ -357,10 +366,6 @@ class SessionService : Service() {
         private const val EXTRA_EASY_TARGET_MIN = "easy_target_min"
         private const val TAG = "Pulse/Session"
 
-        /** How often recorded data is written to Room: the most a crash can lose. */
-        const val FLUSH_INTERVAL_MS = 5 * MS_PER_SECOND
-        private const val NOTIFICATION_INTERVAL_MS = 5 * MS_PER_SECOND
-        private const val WAKE_LOCK_TIMEOUT_MS = 6 * MS_PER_HOUR
 
         /**
          * Starts a session. Call from the UI (the app must be in the foreground).

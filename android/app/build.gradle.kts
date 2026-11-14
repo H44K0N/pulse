@@ -10,6 +10,7 @@ plugins {
     alias(libs.plugins.kotlin.serialization)
     alias(libs.plugins.ksp)
     alias(libs.plugins.room)
+    alias(libs.plugins.roborazzi)
 }
 
 android {
@@ -31,8 +32,8 @@ android {
         // real phone and strap. Then bump it and read the "behavior changes: apps targeting
         // Android 17" page.
         targetSdk = 36
-        versionCode = 3
-        versionName = "0.3.1"
+        versionCode = 4
+        versionName = "0.4.0"
     }
 
     buildTypes {
@@ -63,6 +64,11 @@ android {
     }
 }
 
+roborazzi {
+    // Design mockups and screen snapshots live next to the tests, committed to git.
+    outputDir.set(file("src/test/screenshots"))
+}
+
 room {
     // Schema JSON per database version, committed to git. Needed to write and test migrations.
     schemaDirectory("$projectDir/schemas")
@@ -90,6 +96,8 @@ dependencies {
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.robolectric)
     testImplementation(libs.androidx.test.core)
+    testImplementation(libs.roborazzi)
+    testImplementation(libs.roborazzi.compose)
 }
 
 // Guard rail for the brief's "no Google Play Services" rule: fails the build if anything

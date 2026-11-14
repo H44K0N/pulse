@@ -53,6 +53,16 @@ data class SessionEntity(
     val timeInTargetMs: Long? = null,
     val newHrMax: Int? = null,
     val driftPct: Double? = null,
+    // Digest for the Progress page and the session list (schema version 2): computed when the
+    // session is saved, so listing sessions never has to read their samples. See SessionDigest.
+    /** 4x4: mean HRR60 of the intervals where it was measured. */
+    val avgHrr60: Double? = null,
+    /** 4x4: mean of the work intervals' average HR. */
+    val avgWorkHr: Double? = null,
+    /** 4x4: mean % in zone of the work intervals. */
+    val workPctInZone: Double? = null,
+    /** Downsampled HR, "120,121,,130" (empty = gap); null while recording. */
+    val sparkline: String? = null,
 )
 
 @Entity(
