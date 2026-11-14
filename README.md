@@ -4,8 +4,7 @@ Polar H10 interval coach for Android: connects to the strap, logs every session,
 and coaches 4x4 intervals and easy runs by voice. Sessions sync to a small
 self-hosted FastAPI backend.
 
-Version 0.4.0 (Milestone 4: redesign, Progress and session history). Sync to the server
-arrives in Milestone 5. See `ARCHITECTURE.md` for how it fits together and
+Version 0.5.0 (Milestone 5: finished sessions sync to the server). See `ARCHITECTURE.md` for how it fits together and
 `docs/session-format.md` for the session data contract.
 
 ## Build and test
@@ -67,7 +66,7 @@ A normal test run skips these. The UI font is Inter (SIL Open Font License,
 - **Progress**: last 3 weeks vs the 3 before (tap Sessions for the training calendar), one
   trend chart (Recovery / In zone / Drift), the last 8 sessions and "Show all".
 - **Settings** (saved automatically): age and HRmax, the strap; collapsed: Workout
-  (4x4 durations and zones), Sync (server URL and token, masked), Developer (simulator).
+  (4x4 durations and zones), Sync (server, see below), Developer (simulator).
 
 ## How a session is recorded
 
@@ -78,6 +77,41 @@ database every 5 seconds. When the session ends, the complete result replaces th
 If Android kills the app mid-session, the data up to the last write stays in the
 database. On the next start the session is marked **incomplete** (it is not resumed) and
 is exported with `"complete": false`.
+
+## Sync to your server
+
+Finished sessions (complete, or marked incomplete after a crash; never one still being
+recorded) are uploaded to your own Pulse server (`server/`, see `server/DEPLOY.md`) as the
+JSON of `docs/session-format.md`. Nothing else is ever sent anywhere.
+
+1. Settings > Sync: enter the server URL (e.g. `https://pulse-api.example.com`, HTTPS only)
+   and the API token (the server's `PULSE_API_TOKEN`; paste it, the eye shows it to check).
+2. Tap **Test connection**: "Connected", "Cannot reach the server", "does not accept this
+   token" or "must start with https://".
+3. That's it. Uploads run in the background whenever the phone is online: when a session
+   ends, when the app starts, 20 s after the URL/token was edited, and on **Sync now**.
+   Failed attempts are retried with growing pauses (1 min, 2, 4, ... up to 5 h).
+
+Without a URL and token the app works offline and shows nothing about sync.
+
+What you see (only when something is not fine):
+
+| Where | Shown | Meaning |
+|---|---|---|
+| Session row / detail | nothing | on the server |
+| | "Not synced" (grey) | waiting: no connection yet, or the next retry |
+| | "Upload failed" (amber) | the server rejected this session (too large or invalid); it is not retried automatically, **Sync now** tries once more |
+| Settings > Sync header | "All synced · today 14:02" / "2 waiting" | fine |
+| | "Not syncing: Wrong API token" (amber) | fix the token; the reason is also shown inside the group |
+
+The server keeps the first upload of a session and has no delete: deleting a session in the
+app does not remove it from the server. Changing the server URL to a different server
+uploads the whole history there once.
+
+Testing against a server on your computer (debug builds only, which also allow plain http
+to your own machine): run the server on port 8000, `adb reverse tcp:8000 tcp:8000`, and set
+the URL to `http://localhost:8000` (from the emulator: `http://10.0.2.2:8000`). Release
+builds refuse any `http://` URL.
 
 ## Live screen and voice
 

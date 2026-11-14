@@ -7,6 +7,7 @@ import dev.tischbein.pulse.coaching.SessionMode
 import dev.tischbein.pulse.coaching.SessionResult
 import dev.tischbein.pulse.data.db.SessionEntity
 import dev.tischbein.pulse.data.db.SessionStatus
+import dev.tischbein.pulse.data.db.SyncState
 
 /**
  * What the Progress page and the session list need about one session, without loading its
@@ -32,6 +33,8 @@ data class SessionDigest(
     val sparkline: List<Int?>,
     val hrMaxUsed: Int,
     val complete: Boolean = true,
+    /** One of SyncState: whether the session is on the server yet (a new session is not). */
+    val syncState: String = SyncState.PENDING,
 ) {
     companion object {
         fun of(
@@ -113,4 +116,5 @@ fun SessionEntity.toDigest(): SessionDigest =
         sparkline = decodeSparkline(sparkline),
         hrMaxUsed = hrMaxUsed,
         complete = status == SessionStatus.COMPLETE,
+        syncState = syncState,
     )

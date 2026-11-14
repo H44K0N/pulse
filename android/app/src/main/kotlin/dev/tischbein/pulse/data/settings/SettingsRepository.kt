@@ -65,6 +65,16 @@ class SettingsRepository(private val dataStore: DataStore<Preferences>) {
         return raised
     }
 
+    /**
+     * The server (normalised URL) whose upload states the database holds: SessionUploader
+     * compares it with the configured URL to notice a server change. Not a user setting.
+     */
+    suspend fun syncTarget(): String? = dataStore.data.first()[SYNC_TARGET]
+
+    suspend fun setSyncTarget(url: String) {
+        dataStore.edit { it[SYNC_TARGET] = url }
+    }
+
     private fun Preferences.toSettings(): AppSettings {
         val d = AppSettings()
         return AppSettings(
@@ -127,5 +137,6 @@ class SettingsRepository(private val dataStore: DataStore<Preferences>) {
         val SIMULATOR = booleanPreferencesKey("simulator_enabled")
         val SIM_PROFILE = stringPreferencesKey("simulator_profile")
         val DEVICE_ID = stringPreferencesKey("device_id")
+        val SYNC_TARGET = stringPreferencesKey("sync_target")
     }
 }

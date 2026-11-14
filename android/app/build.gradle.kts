@@ -32,8 +32,8 @@ android {
         // real phone and strap. Then bump it and read the "behavior changes: apps targeting
         // Android 17" page.
         targetSdk = 36
-        versionCode = 4
-        versionName = "0.4.0"
+        versionCode = 5
+        versionName = "0.5.0"
     }
 
     buildTypes {
@@ -51,6 +51,9 @@ android {
 
     buildFeatures {
         compose = true
+        // BuildConfig.DEBUG: plain http:// to the developer's own machine is accepted only in
+        // debug builds (data/sync/ServerUrl.kt; network_security_config in src/debug).
+        buildConfig = true
     }
 
     testOptions {
@@ -88,6 +91,7 @@ dependencies {
     ksp(libs.room.compiler)
     implementation(libs.datastore.preferences)
     implementation(libs.kotlinx.serialization.json)
+    implementation(libs.work.runtime)
 
     implementation(libs.polar.ble.sdk)
 

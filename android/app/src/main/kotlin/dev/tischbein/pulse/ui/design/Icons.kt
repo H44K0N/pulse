@@ -17,10 +17,10 @@ import dev.tischbein.pulse.ui.theme.Pulse
 
 /*
  * The handful of line icons the app needs, drawn on a 24-unit grid. Drawing them avoids the
- * material-icons dependency (several MB) for four glyphs, and keeps one consistent stroke.
+ * material-icons dependency (several MB) for a handful of glyphs, and keeps one consistent stroke.
  */
 
-enum class PulseIcon { TRAIN, PROGRESS, SETTINGS, HEART }
+enum class PulseIcon { TRAIN, PROGRESS, SETTINGS, HEART, EYE, EYE_OFF }
 
 @Composable
 fun Icon(
@@ -63,6 +63,18 @@ fun Icon(
                 }
             }
             PulseIcon.HEART -> drawPath(heartPath(u), tint)
+            PulseIcon.EYE, PulseIcon.EYE_OFF -> {
+                // An eye (show the token); crossed out = hide it.
+                val eye = Path().apply {
+                    moveTo(2f * u, 12f * u)
+                    quadraticTo(12f * u, 2f * u, 22f * u, 12f * u)
+                    quadraticTo(12f * u, 22f * u, 2f * u, 12f * u)
+                    close()
+                }
+                drawPath(eye, tint, style = stroke)
+                drawCircle(tint, 3f * u, p(12f, 12f), style = stroke)
+                if (icon == PulseIcon.EYE_OFF) drawLine(tint, p(4f, 20f), p(20f, 4f), stroke.width, StrokeCap.Round)
+            }
         }
     }
 }

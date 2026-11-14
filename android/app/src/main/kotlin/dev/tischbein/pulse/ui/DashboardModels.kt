@@ -231,6 +231,8 @@ data class SessionDetail(
     val newHrMax: String?,
     /** "1 signal gap (20 s)" or null. */
     val gapsText: String?,
+    /** Not on the server yet / rejected; null when synced or sync is off. */
+    val sync: SyncBadge? = null,
 )
 
 /** HR per [stepSec]-second bucket (median, gaps null); see [bucketMedians]. */
@@ -248,6 +250,7 @@ fun sessionDetail(
     zone: ZoneId,
     simulated: Boolean = false,
     complete: Boolean = true,
+    sync: SyncBadge? = null,
 ): SessionDetail {
     val s = result.summary
     val interval = result.setup.mode == SessionMode.INTERVAL_4X4
@@ -290,6 +293,7 @@ fun sessionDetail(
         subtitle = DATE_TIME.format(started) + if (simulated) " · Simulator" else "",
         mode = result.setup.mode,
         complete = complete,
+        sync = sync,
         stats =
             listOf(
                 HeroStat("Duration", formatDuration(s.durationMs)),
@@ -358,6 +362,8 @@ data class SessionListRow(
     val mode: SessionMode,
     val sparkline: List<Int?>,
     val complete: Boolean,
+    /** Not on the server yet / rejected; null when synced or sync is off. */
+    val sync: SyncBadge? = null,
 )
 
 data class ProgressOverview(
@@ -402,10 +408,11 @@ private fun hoursMinutes(ms: Long): String {
     return if (totalMin >= 60) "${totalMin / 60}h ${totalMin % 60}m" else "${totalMin}m"
 }
 
-/** The rows of the session lists, newest first. */
+/** The rows of the session lists, newest first. [syncConfigured] false = no sync marks at all. */
 fun sessionRows(
     sessions: List<SessionDigest>,
     zone: ZoneId,
+    syncConfigured: Boolean = false,
 ): List<SessionListRow> =
     sessions.sortedByDescending { it.startedAtEpochMs }.map { d ->
         val t = Instant.ofEpochMilli(d.startedAtEpochMs).atZone(zone)
@@ -420,6 +427,7 @@ fun sessionRows(
             mode = d.mode,
             sparkline = d.sparkline,
             complete = d.complete,
+            sync = syncBadge(d.syncState, syncConfigured),
         )
     }
 
@@ -438,6 +446,7 @@ fun progressOverview(
     today: LocalDate,
     zone: ZoneId,
     windowDays: Int = AppConstants.PROGRESS_WINDOW_DAYS,
+    syncConfigured: Boolean = false,
 ): ProgressOverview {
     val totalDays = windowDays * 2
     val firstDay = today.minusDays(totalDays - 1L)
@@ -537,7 +546,7 @@ fun progressOverview(
         calendar = weeks,
         consistencyText = consistency,
         trends = trends,
-        recent = sessionRows(recent, zone),
+        recent = sessionRows(recent, zone, syncConfigured),
         totalSessions = totalSessions,
         totalDays = totalDays,
         splitDay = windowDays,

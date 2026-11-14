@@ -98,6 +98,14 @@ class MigrationTest {
         )
     }
 
+    /** Opens the test database with the current Room schema and every migration. */
+    private fun openMigrated(): PulseDatabase =
+        Room
+            .databaseBuilder(context, PulseDatabase::class.java, name)
+            .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+            .allowMainThreadQueries()
+            .build()
+
     @Test
     fun `1 to 2 adds the digest columns and back-fills them from the stored rows`() =
         runBlocking {
@@ -124,12 +132,7 @@ class MigrationTest {
                 close()
             }
 
-            val db =
-                Room
-                    .databaseBuilder(context, PulseDatabase::class.java, name)
-                    .addMigrations(MIGRATION_1_2)
-                    .allowMainThreadQueries()
-                    .build()
+            val db = openMigrated()
             try {
                 val dao = db.sessionDao()
                 val expected = SessionDigest.of("complete", result, 0L)
@@ -148,6 +151,38 @@ class MigrationTest {
                 // Old data is untouched and readable through the new queries.
                 assertEquals(result.samples.size, dao.samples("complete").size)
                 assertEquals(listOf("complete", "incomplete").sorted(), dao.observeAllFinished().first().map { it.id }.sorted())
+            } finally {
+                db.close()
+            }
+        }
+
+    @Test
+    fun `2 to 3 adds the sync state, every existing session pending`() =
+        runBlocking {
+            createDatabase(2).apply {
+                insertSession("complete", SessionStatus.COMPLETE, 60_000L)
+                insertSession("incomplete", SessionStatus.INCOMPLETE, 3_000L)
+                insertSession("recording", SessionStatus.RECORDING, null)
+                close()
+            }
+
+            val db = openMigrated()
+            try {
+                val dao = db.sessionDao()
+                for (id in listOf("complete", "incomplete", "recording")) {
+                    val s = assertNotNull(dao.session(id))
+                    assertEquals(SyncState.PENDING, s.syncState)
+                    assertNull(s.syncError)
+                    assertNull(s.syncAttemptAtEpochMs)
+                    assertEquals(0, s.syncAttempts)
+                }
+                // The finished ones are queued for upload, oldest first; the recording one is not.
+                assertEquals(listOf("complete", "incomplete").sorted(), dao.pendingUploadIds().sorted())
+                assertEquals(2, dao.observeSyncOverview().first().pending)
+                // The sync updates work on migrated rows.
+                dao.markSynced("complete", 123L)
+                assertEquals(SyncState.SYNCED, assertNotNull(dao.session("complete")).syncState)
+                assertEquals(123L, dao.observeSyncOverview().first().lastSyncedAtEpochMs)
             } finally {
                 db.close()
             }
