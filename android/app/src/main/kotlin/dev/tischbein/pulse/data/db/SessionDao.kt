@@ -11,7 +11,7 @@ import kotlinx.coroutines.flow.Flow
 /** Summary numbers computed from the raw samples (used for sessions that never finished). */
 data class SampleStats(val lastTMs: Long?, val avgHr: Double?, val maxHr: Int?)
 
-/** Everything stored for one session, for export and (Milestone 4) the detail screen. */
+/** Everything stored for one session, for export and the session detail screen. */
 data class StoredSession(
     val session: SessionEntity,
     val samples: List<SampleEntity>,
@@ -110,8 +110,23 @@ abstract class SessionDao {
     @Query("SELECT * FROM sessions WHERE status = :status AND startedAtEpochMs < :startedBefore")
     abstract suspend fun sessionsWithStatus(status: String, startedBefore: Long): List<SessionEntity>
 
-    @Query("SELECT * FROM sessions ORDER BY startedAtEpochMs DESC")
-    abstract fun observeSessions(): Flow<List<SessionEntity>>
+    // History reads. "Finished" = complete or incomplete, i.e. not the one being recorded.
+    // Only the `sessions` rows (with their digest columns): never the samples.
+
+    /** Finished sessions started at or after [fromEpochMs], newest first (Progress window). */
+    @Query("SELECT * FROM sessions WHERE status != 'recording' AND startedAtEpochMs >= :fromEpochMs ORDER BY startedAtEpochMs DESC")
+    abstract fun observeFinishedSince(fromEpochMs: Long): Flow<List<SessionEntity>>
+
+    /** The [limit] most recent finished sessions (Progress list). */
+    @Query("SELECT * FROM sessions WHERE status != 'recording' ORDER BY startedAtEpochMs DESC LIMIT :limit")
+    abstract fun observeRecentFinished(limit: Int): Flow<List<SessionEntity>>
+
+    /** Every finished session, newest first ("Show all"). One row is ~200 bytes: years fit in memory. */
+    @Query("SELECT * FROM sessions WHERE status != 'recording' ORDER BY startedAtEpochMs DESC")
+    abstract fun observeAllFinished(): Flow<List<SessionEntity>>
+
+    @Query("SELECT COUNT(*) FROM sessions WHERE status != 'recording'")
+    abstract fun observeFinishedCount(): Flow<Int>
 
     @Query("SELECT * FROM samples WHERE sessionId = :id ORDER BY tMs, rowId")
     abstract suspend fun samples(id: String): List<SampleEntity>

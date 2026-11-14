@@ -4,7 +4,9 @@ Polar H10 interval coach for Android: connects to the strap, logs every session,
 and coaches 4x4 intervals and easy runs by voice. Sessions sync to a small
 self-hosted FastAPI backend.
 
-Work in progress. See `docs/session-format.md` for the session data contract.
+Version 0.4.0 (Milestone 4: redesign, Progress and session history). Sync to the server
+arrives in Milestone 5. See `ARCHITECTURE.md` for how it fits together and
+`docs/session-format.md` for the session data contract.
 
 ## Build and test
 
@@ -23,10 +25,11 @@ cd android
   Google Play Services or Firebase.
 - The debug APK ends up in `android/app/build/outputs/apk/debug/app-debug.apk`.
 
-### Screen mockups
+### Screenshots
 
-The redesigned screens are rendered to PNG on the JVM (Robolectric + Roborazzi, no device),
-with data from the real coaching engine and the simulator:
+The real screens (the same stateless composables the app uses) are rendered to PNG on the
+JVM (Robolectric + Roborazzi, no device), with data from the real coaching engine and the
+simulator:
 
 ```sh
 ./gradlew :app:recordRoborazziDebug --tests '*DesignMockups*'
@@ -39,16 +42,32 @@ A normal test run skips these. The UI font is Inter (SIL Open Font License,
 ## Install and try it
 
 1. Install the APK (`adb install -r app-debug.apk`, or copy it to the phone and open it;
-   allow "install unknown apps" for your file manager once).
+   allow "install unknown apps" for your file manager once). Updating keeps your sessions:
+   the database is migrated on the first start.
 2. Open Pulse and grant "Nearby devices" (Bluetooth) and notifications.
-3. Without the strap: Settings > "Debug: simulator", pick a profile, Save. The home screen
-   shows "Simulator: <profile>"; choose a mode and Start.
-   Easy mode takes an optional target duration on the home screen (empty = open-ended).
-4. With the strap: put it on (it only wakes up with skin contact), tap
-   "Scan / connect H10" and pick it. Pulse remembers it and reconnects automatically the
-   next time the app is opened.
-5. If a session stops when the screen is off, set Pulse's battery usage to "Unrestricted"
-   (Settings > Battery in Pulse links to the right system page).
+3. Without the strap: Settings > Developer > Simulator on, pick a profile. Train then shows
+   "Simulator"; choose a mode and Start.
+4. With the strap: put it on (it only wakes up with skin contact), tap the strap card on
+   Train ("Find strap") and pick it. Pulse remembers it and reconnects automatically the next
+   time the app is opened. Settings > Strap changes or forgets it.
+5. If a session stops when the screen is off, Settings shows "Battery optimisation is on";
+   tap Fix and set Pulse to "Unrestricted".
+
+## The screens
+
+- **Train**: strap, mode (4x4 / Easy), a one-line plan (tap it for the phase timeline, and
+  in easy mode the target duration), Start.
+- **Live**: phase and interval, the session strip, the heart rate colored by zone, the
+  target range and the time left. Tap the heart rate for the last two minutes (and live
+  drift in easy mode). Warnings (strap reconnecting, no skin contact, battery under 20 %,
+  voice off) only appear when they apply. End = press and hold until the red fill is full.
+- **Summary / session detail**: time in zone, duration, average HR, HRR60 (4x4) or drift
+  (easy), the HR graph and the per-interval table. "Delete session" removes it with an Undo
+  snackbar.
+- **Progress**: last 3 weeks vs the 3 before (tap Sessions for the training calendar), one
+  trend chart (Recovery / In zone / Drift), the last 8 sessions and "Show all".
+- **Settings** (saved automatically): age and HRmax, the strap; collapsed: Workout
+  (4x4 durations and zones), Sync (server URL and token, masked), Developer (simulator).
 
 ## How a session is recorded
 
@@ -64,7 +83,7 @@ is exported with `"complete": false`.
 
 - The live screen keeps the display on while it is visible (only then). The session itself
   runs in the service and does not need the screen.
-- End = press and hold the End button (a tap only shows the hint).
+- End = press and hold the End button until the fill is full (a tap only says "Keep holding").
 - Cues are spoken with Android text-to-speech in English. Music is ducked (turned down)
   while the coach talks, not paused; spoken-word apps (podcasts) may pause instead, that is
   their choice. Cue volume follows the media volume on most phones.

@@ -1,5 +1,6 @@
 package dev.tischbein.pulse.session
 
+import dev.tischbein.pulse.coaching.CoachingConfig
 import dev.tischbein.pulse.coaching.CoachingRunner
 import dev.tischbein.pulse.coaching.CoachingState
 import dev.tischbein.pulse.coaching.SessionMode
@@ -20,9 +21,13 @@ class ActiveSession(
     val easyTargetMs: Long?,
     /** "Polar H10 A1B2C3D4" or "Simulator: GOOD_4X4". */
     val sourceLabel: String,
+    /** The configuration this session runs with (Settings at start; later edits do not apply). */
+    val config: CoachingConfig,
     val state: StateFlow<CoachingState>,
     /** Whether the voice coach works; the live screen shows a warning when it does not. */
     val voice: StateFlow<VoiceStatus>,
+    /** HR history and last valid reading, for the sparkline, live drift and "reconnecting". */
+    val liveHr: StateFlow<LiveHr>,
     private val runner: CoachingRunner,
 ) {
     fun pause() = runner.pause()

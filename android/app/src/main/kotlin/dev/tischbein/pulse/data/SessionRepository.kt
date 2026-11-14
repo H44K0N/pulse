@@ -1,6 +1,8 @@
 package dev.tischbein.pulse.data
 
+import dev.tischbein.pulse.coaching.RecordedSample
 import dev.tischbein.pulse.coaching.SessionResult
+import dev.tischbein.pulse.data.db.DeviceKind
 import dev.tischbein.pulse.data.db.EventEntity
 import dev.tischbein.pulse.data.db.PhaseEntity
 import dev.tischbein.pulse.data.db.SampleEntity
@@ -10,6 +12,7 @@ import dev.tischbein.pulse.data.db.SessionStatus
 import dev.tischbein.pulse.data.export.SessionJson
 import dev.tischbein.pulse.data.export.toDocument
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.map
 import kotlin.math.roundToInt
 
 /**
@@ -63,6 +66,8 @@ class SessionRepository(private val dao: SessionDao) {
         val stats = dao.sampleStats(session.id)
         val durationMs = stats.lastTMs ?: 0L
         dao.closeOpenPhases(session.id, durationMs)
+        // Digest: only the HR line is known (interval stats are computed at the end).
+        val samples = dao.samples(session.id).map { RecordedSample(it.tMs, it.hr, emptyList()) }
         dao.updateSession(
             session.copy(
                 status = SessionStatus.INCOMPLETE,
@@ -71,16 +76,37 @@ class SessionRepository(private val dao: SessionDao) {
                 avgHr = stats.avgHr?.roundToInt(),
                 maxHr = stats.maxHr,
                 timeInTargetMs = 0L,
+                sparkline = encodeSparkline(sparklineOf(samples, durationMs)),
             ),
         )
     }
 
-    fun observeSessions(): Flow<List<SessionEntity>> = dao.observeSessions()
+    // ---- History (finished sessions only; digests, never samples) ----
+
+    /** Finished sessions started at or after [fromEpochMs], newest first. */
+    fun observeSince(fromEpochMs: Long): Flow<List<SessionDigest>> = dao.observeFinishedSince(fromEpochMs).map { rows -> rows.map { it.toDigest() } }
+
+    fun observeRecent(limit: Int): Flow<List<SessionDigest>> = dao.observeRecentFinished(limit).map { rows -> rows.map { it.toDigest() } }
+
+    fun observeAll(): Flow<List<SessionDigest>> = dao.observeAllFinished().map { rows -> rows.map { it.toDigest() } }
+
+    fun observeCount(): Flow<Int> = dao.observeFinishedCount()
+
+    /** One session with everything needed for its detail screen, or null if it does not exist (any more). */
+    suspend fun load(sessionId: String): LoadedSession? =
+        dao.load(sessionId)?.let { LoadedSession(it.session, it.toResult()) }
 
     suspend fun session(sessionId: String): SessionEntity? = dao.session(sessionId)
 
+    /** Deletes the session and (cascade) all its samples, events, phases, ... */
     suspend fun delete(sessionId: String) = dao.deleteSession(sessionId)
 
     /** The session as the JSON document of docs/session-format.md (for sync in Milestone 5). */
     suspend fun exportJson(sessionId: String): String? = dao.load(sessionId)?.let { SessionJson.encode(it.toDocument()) }
+}
+
+/** A stored session for the detail screen: the row (dates, device, status) and its data. */
+class LoadedSession(val entity: SessionEntity, val result: SessionResult) {
+    val complete: Boolean get() = entity.status == SessionStatus.COMPLETE
+    val simulated: Boolean get() = entity.deviceKind == DeviceKind.SIMULATOR
 }

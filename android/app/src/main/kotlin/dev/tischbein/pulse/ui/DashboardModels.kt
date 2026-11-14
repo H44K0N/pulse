@@ -1,12 +1,16 @@
 package dev.tischbein.pulse.ui
 
+import dev.tischbein.pulse.AppConstants
 import dev.tischbein.pulse.coaching.CoachingState
+import dev.tischbein.pulse.coaching.EasyConfig
 import dev.tischbein.pulse.coaching.FourByFourConfig
 import dev.tischbein.pulse.coaching.MS_PER_MINUTE
 import dev.tischbein.pulse.coaching.MS_PER_SECOND
 import dev.tischbein.pulse.coaching.PhaseKind
 import dev.tischbein.pulse.coaching.SessionMode
 import dev.tischbein.pulse.coaching.SessionResult
+import dev.tischbein.pulse.data.SessionDigest
+import dev.tischbein.pulse.data.bucketMedians
 import dev.tischbein.pulse.sensor.ConnectionState
 import dev.tischbein.pulse.sensor.DeviceStatus
 import dev.tischbein.pulse.session.formatDuration
@@ -27,11 +31,14 @@ import kotlin.math.abs
 import kotlin.math.roundToInt
 
 /*
- * Plain values for the redesigned screens (live dashboard, session detail, progress). No
- * Compose here, so the mapping is unit-testable; the *Content composables only lay them out.
+ * Plain values for the screens (live, session detail, progress). No Compose here, so the
+ * mapping is unit-testable; the *Content composables only lay them out.
  */
 
 // ---- Live ------------------------------------------------------------------------------
+
+/** A small chip on the live screen. Only shown when something needs attention. */
+data class LiveWarning(val text: String, val severe: Boolean)
 
 data class LiveDashboard(
     val ui: LiveUi,
@@ -44,27 +51,21 @@ data class LiveDashboard(
     /** 4x4 during work and its recovery, else null. */
     val intervalNumber: Int?,
     val intervalCount: Int?,
-    /** Progress of the current phase (4x4) or of the target duration (easy), 0..1. */
-    val ringProgress: Float,
     /** "2:14" time left in the phase (4x4) or elapsed (easy). */
     val bigTime: String,
+    /** "left" (4x4), "of 45:00" or "elapsed" (easy). */
     val bigTimeLabel: String,
-    /** Smoothed HR of the last [LIVE_WINDOW_S] seconds, 1 Hz, oldest first; null = no signal. */
+    /** Smoothed HR of the last [AppConstants.LIVE_WINDOW_S] seconds, 1 Hz, oldest first; null = no signal. */
     val recentHr: List<Int?>,
-    /** Planned phases (4x4), empty in easy mode. */
+    /** Planned phases (4x4), one segment for an easy run with a target, else empty. */
     val timeline: List<TimelineSegment>,
     val timelinePosition: Float,
     /** Easy: drift so far, "+2.4 %"; null when not enough data yet. */
     val driftText: String?,
     /** Sensor lost: "Last 158 bpm · 14 s ago". */
     val lastSeenText: String?,
-    val battery: Int?,
-    val contact: Boolean?,
-    val connection: ConnectionState,
-    val simulator: Boolean,
+    val warnings: List<LiveWarning>,
 )
-
-const val LIVE_WINDOW_S = 120
 
 fun planSegments(p: FourByFourConfig): List<TimelineSegment> =
     buildList {
@@ -75,6 +76,8 @@ fun planSegments(p: FourByFourConfig): List<TimelineSegment> =
         }
         add(TimelineSegment(PhaseKind.COOLDOWN, p.cooldownMs.toFloat()))
     }
+
+fun planTotalMs(p: FourByFourConfig): Long = p.warmupMs + p.intervalCount * (p.workMs + p.recoveryMs) + p.cooldownMs
 
 private fun phaseDurationMs(
     kind: PhaseKind,
@@ -102,12 +105,18 @@ private fun phaseIndex(
 
 /**
  * Cardiac drift of the session so far: mean HR of the second half vs the first half, in
- * percent. Null below 10 minutes of data (too noisy to show). The engine computes the
- * official end-of-session value; this is only the live hint.
+ * percent, with the same warm-up exclusion and minimum window as the engine's official
+ * end-of-session value ([EasyConfig.driftIgnoreFirstMs], [EasyConfig.driftMinWindowMs]).
+ * Null while there is not enough data. Only a live hint; the engine's value is the record.
  */
-fun liveDriftPct(hrBySecond: List<Int?>): Double? {
-    val valid = hrBySecond.filterNotNull()
-    if (valid.size < 10 * 60) return null
+fun liveDriftPct(
+    hrBySecond: List<Int?>,
+    easy: EasyConfig = EasyConfig(),
+): Double? {
+    val skip = (easy.driftIgnoreFirstMs / MS_PER_SECOND).toInt()
+    if (hrBySecond.size <= skip) return null
+    val valid = hrBySecond.subList(skip, hrBySecond.size).filterNotNull()
+    if (valid.size < easy.driftMinWindowMs / MS_PER_SECOND) return null
     val half = valid.size / 2
     val first = valid.subList(0, half).average()
     val second = valid.subList(half, valid.size).average()
@@ -125,37 +134,43 @@ fun liveDashboard(
     lastValidHr: Int? = null,
     msSinceLastValid: Long? = null,
 ): LiveDashboard {
-    val ui = liveUi(state, voice, easyTargetMs)
-    val segments = if (state.mode == SessionMode.INTERVAL_4X4) planSegments(protocol) else emptyList()
+    val ui = liveUi(state, voice)
     val kind = state.phaseKind
-    val (ring, bigTime, bigLabel) =
-        if (state.mode == SessionMode.INTERVAL_4X4 && kind != null) {
-            val dur = phaseDurationMs(kind, protocol).coerceAtLeast(1)
-            val left = state.phaseRemainingMs ?: 0
-            val label =
-                when (kind) {
-                    PhaseKind.WORK -> "left in interval"
-                    PhaseKind.RECOVERY -> "left in recovery"
-                    PhaseKind.WARMUP -> "left in warmup"
-                    else -> "left in cooldown"
-                }
-            Triple(1f - left.toFloat() / dur, formatDuration(left), label)
+    val interval = state.mode == SessionMode.INTERVAL_4X4
+    val segments =
+        when {
+            interval -> planSegments(protocol)
+            easyTargetMs != null -> listOf(TimelineSegment(PhaseKind.EASY, easyTargetMs.toFloat()))
+            else -> emptyList()
+        }
+    val (bigTime, bigLabel) =
+        if (interval && kind != null) {
+            formatDuration(state.phaseRemainingMs ?: 0) to "left"
         } else {
-            val target = easyTargetMs
-            Triple(
-                if (target != null) state.elapsedActiveMs.toFloat() / target else 0f,
-                formatDuration(state.elapsedActiveMs),
-                if (target != null) "of ${formatDuration(target)}" else "elapsed",
-            )
+            formatDuration(state.elapsedActiveMs) to (easyTargetMs?.let { "of ${formatDuration(it)}" } ?: "elapsed")
         }
     val position =
-        if (segments.isEmpty() || kind == null) {
-            0f
-        } else {
-            val idx = phaseIndex(state, protocol)
-            val before = segments.take(idx).sumOf { it.weight.toDouble() }
-            val inPhase = phaseDurationMs(kind, protocol) - (state.phaseRemainingMs ?: 0)
-            ((before + inPhase) / segments.sumOf { it.weight.toDouble() }).toFloat()
+        when {
+            segments.isEmpty() || kind == null -> 0f
+            !interval -> state.elapsedActiveMs.toFloat() / (easyTargetMs ?: 1L)
+            else -> {
+                val before = segments.take(phaseIndex(state, protocol)).sumOf { it.weight.toDouble() }
+                val inPhase = phaseDurationMs(kind, protocol) - (state.phaseRemainingMs ?: 0)
+                ((before + inPhase) / segments.sumOf { it.weight.toDouble() }).toFloat()
+            }
+        }
+    val sensorLost = ui.zone == ZoneIndicator.NO_SIGNAL
+    val warnings =
+        buildList {
+            if (device.simulatorProfile != null) {
+                add(LiveWarning("Simulator", severe = false))
+            } else {
+                // The big "Reconnecting…" already says it when the signal is gone.
+                if (device.connection != ConnectionState.CONNECTED && !sensorLost) add(LiveWarning("Reconnecting", severe = true))
+                if (device.skinContact == false) add(LiveWarning("No skin contact", severe = true))
+                device.batteryPercent?.takeIf { it < AppConstants.LOW_BATTERY_PCT }?.let { add(LiveWarning("Strap battery $it %", severe = false)) }
+            }
+            if (ui.voiceOff) add(LiveWarning("Voice off", severe = true))
         }
     return LiveDashboard(
         ui = ui,
@@ -166,12 +181,11 @@ fun liveDashboard(
         isWork = state.phaseKind == PhaseKind.WORK,
         intervalNumber = state.intervalNumber,
         intervalCount = state.intervalCount,
-        ringProgress = ring.coerceIn(0f, 1f),
         bigTime = bigTime,
         bigTimeLabel = bigLabel,
-        recentHr = recentHr.takeLast(LIVE_WINDOW_S),
+        recentHr = recentHr.takeLast(AppConstants.LIVE_WINDOW_S),
         timeline = segments,
-        timelinePosition = position,
+        timelinePosition = position.coerceIn(0f, 1f),
         driftText = driftPct?.let { String.format(Locale.ROOT, "%+.1f %%", it) },
         lastSeenText =
             if (state.sensorLost && lastValidHr != null) {
@@ -179,10 +193,7 @@ fun liveDashboard(
             } else {
                 null
             },
-        battery = device.batteryPercent,
-        contact = device.skinContact,
-        connection = device.connection,
-        simulator = device.simulatorProfile != null,
+        warnings = warnings,
     )
 }
 
@@ -190,13 +201,22 @@ fun liveDashboard(
 
 data class HeroStat(val label: String, val value: String, val unit: String? = null)
 
+data class IntervalRow(
+    val number: Int,
+    val avg: String,
+    val peak: String,
+    val pctInZone: String,
+    val hrr60: String,
+)
+
 data class SessionDetail(
     val title: String,
     val subtitle: String,
     val mode: SessionMode,
+    /** False when the app died mid-session (data up to the last write). */
+    val complete: Boolean,
+    /** At most three numbers under the hero. */
     val stats: List<HeroStat>,
-    /** Two small numbers next to the hero (4x4: intervals done, mean HRR60; easy: drift, zone). */
-    val side: List<HeroStat>,
     /** Share of the target time in zone (4x4: work time in work zone), 0..100. */
     val inZonePct: Int,
     val inZoneText: String,
@@ -208,48 +228,33 @@ data class SessionDetail(
     val yMax: Int,
     val intervals: List<IntervalRow>,
     val intervalZonePct: List<Float>,
-    val drift: String?,
     val newHrMax: String?,
     /** "1 signal gap (20 s)" or null. */
     val gapsText: String?,
-    val hrMaxUsed: Int,
 )
 
-/**
- * HR per [stepSec]-second bucket for charts: the median of the bucket's valid readings, so a
- * single bad beat (the strap sometimes reports one wild value) does not draw a spike; the
- * engine smooths the same way before judging zones. Buckets without a reading are null (gaps).
- */
+/** HR per [stepSec]-second bucket (median, gaps null); see [bucketMedians]. */
 fun bucketHr(
     result: SessionResult,
     stepSec: Int,
-): List<Int?> {
-    val stepMs = stepSec * MS_PER_SECOND
-    val n = ((result.summary.durationMs + stepMs - 1) / stepMs).toInt().coerceAtLeast(1)
-    val buckets = List(n) { mutableListOf<Int>() }
-    for (s in result.samples) {
-        val hr = s.hr ?: continue
-        val i = ((s.tMs - 1).coerceAtLeast(0) / stepMs).toInt()
-        if (i in 0 until n) buckets[i] += hr
-    }
-    return buckets.map { b -> if (b.isEmpty()) null else b.sorted()[b.size / 2] }
-}
+): List<Int?> = bucketMedians(result.samples, result.summary.durationMs, stepSec)
 
 private val DATE_TIME = DateTimeFormatter.ofPattern("EEE d MMM · HH:mm", Locale.ENGLISH)
-private val SHORT_DATE = DateTimeFormatter.ofPattern("EEE d MMM", Locale.ENGLISH)
+private const val DASH = "–"
 
 fun sessionDetail(
     result: SessionResult,
     startedAtEpochMs: Long,
     zone: ZoneId,
-    sourceLabel: String = "Polar H10",
+    simulated: Boolean = false,
+    complete: Boolean = true,
 ): SessionDetail {
     val s = result.summary
     val interval = result.setup.mode == SessionMode.INTERVAL_4X4
     val workMs = result.phases.filter { it.kind == PhaseKind.WORK }.sumOf { it.endMs - it.startMs }
     val targetBaseMs = if (interval) workMs else s.durationMs
     val pct = if (targetBaseMs > 0) (s.timeInTargetMs * 100.0 / targetBaseMs).roundToInt().coerceIn(0, 100) else 0
-    val stepSec = 5
+    val stepSec = AppConstants.DETAIL_CHART_STEP_S
     val hr = bucketHr(result, stepSec)
     val valid = hr.filterNotNull()
     val bands =
@@ -273,30 +278,24 @@ fun sessionDetail(
     val highest = maxOf(valid.maxOrNull() ?: 180, bands.maxOfOrNull { it.targetHigh ?: 0 } ?: 0)
     val gapMs = result.gaps.sumOf { it.endMs - it.startMs }
     val started = Instant.ofEpochMilli(startedAtEpochMs).atZone(zone)
+    val third =
+        if (interval) {
+            val hrrs = result.intervals.mapNotNull { it.hrr60 }
+            HeroStat("HRR60", if (hrrs.isEmpty()) DASH else hrrs.average().roundToInt().toString(), "bpm")
+        } else {
+            HeroStat("Drift", s.driftPct?.let { String.format(Locale.ROOT, "%+.1f", it) } ?: DASH, "%")
+        }
     return SessionDetail(
         title = if (interval) "4×4 intervals" else "Easy run",
-        subtitle = "${DATE_TIME.format(started)} · $sourceLabel",
+        subtitle = DATE_TIME.format(started) + if (simulated) " · Simulator" else "",
         mode = result.setup.mode,
+        complete = complete,
         stats =
             listOf(
                 HeroStat("Duration", formatDuration(s.durationMs)),
-                HeroStat("Avg HR", s.avgHr?.toString() ?: "–", "bpm"),
-                HeroStat("Max HR", s.maxHr?.toString() ?: "–", "bpm"),
+                HeroStat("Avg HR", s.avgHr?.toString() ?: DASH, "bpm"),
+                third,
             ),
-        side =
-            if (interval) {
-                val hrrs = result.intervals.mapNotNull { it.hrr60 }
-                listOf(
-                    HeroStat("Intervals", "${result.intervals.size}/${result.config.fourByFour.intervalCount}"),
-                    HeroStat("Avg HRR60", if (hrrs.isEmpty()) "–" else hrrs.average().roundToInt().toString(), "bpm"),
-                )
-            } else {
-                val easy = result.phases.firstOrNull()
-                listOf(
-                    HeroStat("Drift", s.driftPct?.let { String.format(Locale.ROOT, "%+.1f", it) } ?: "–", "%"),
-                    HeroStat("Zone", easy?.let { "${it.targetLow}–${it.targetHigh}" } ?: "–", "bpm"),
-                )
-            },
         inZonePct = pct,
         inZoneText = "${formatDuration(s.timeInTargetMs)} in zone",
         hr = hr,
@@ -304,9 +303,17 @@ fun sessionDetail(
         bands = bands,
         yMin = ((lowest - 10) / 10) * 10,
         yMax = ((highest + 15) / 10) * 10,
-        intervals = summaryUi(result).intervals,
+        intervals =
+            result.intervals.map {
+                IntervalRow(
+                    number = it.number,
+                    avg = it.avgHr?.toString() ?: DASH,
+                    peak = it.peakHr?.toString() ?: DASH,
+                    pctInZone = "${it.pctInZone.roundToInt()} %",
+                    hrr60 = it.hrr60?.toString() ?: DASH,
+                )
+            },
         intervalZonePct = result.intervals.map { it.pctInZone.toFloat() },
-        drift = s.driftPct?.let { String.format(Locale.ROOT, "%+.1f %%", it) },
         newHrMax = s.newHrMax?.let { "New max heart rate: $it bpm" },
         gapsText =
             if (result.gaps.isEmpty()) {
@@ -314,74 +321,22 @@ fun sessionDetail(
             } else {
                 "${result.gaps.size} signal gap${if (result.gaps.size > 1) "s" else ""} (${gapMs / MS_PER_SECOND} s), shown as breaks"
             },
-        hrMaxUsed = result.setup.hrMax,
     )
 }
 
 // ---- Progress --------------------------------------------------------------------------
 
-/**
- * What the progress page needs to know about one finished session. In the app this comes
- * from Room (one row per session, computed when the session is saved).
- */
-data class SessionDigest(
-    val id: String,
-    val startedAtEpochMs: Long,
-    val mode: SessionMode,
-    val durationMs: Long,
-    val avgHr: Int?,
-    val maxHr: Int?,
-    val timeInTargetMs: Long,
-    /** 4x4: mean HRR60 over the intervals where it was measured. */
-    val avgHrr60: Double?,
-    /** 4x4: mean of the work intervals' average HR. */
-    val avgWorkHr: Double?,
-    /** 4x4: mean % in zone over the work intervals. */
-    val workPctInZone: Double?,
-    val driftPct: Double?,
-    /** Downsampled HR for the list row (about 48 points). */
-    val sparkline: List<Int?>,
-    val hrMaxUsed: Int,
-) {
-    companion object {
-        fun of(
-            id: String,
-            result: SessionResult,
-            startedAtEpochMs: Long,
-        ): SessionDigest {
-            val ivs = result.intervals
-            val step = ((result.summary.durationMs / MS_PER_SECOND) / SPARK_POINTS).toInt().coerceAtLeast(1)
-            return SessionDigest(
-                id = id,
-                startedAtEpochMs = startedAtEpochMs,
-                mode = result.setup.mode,
-                durationMs = result.summary.durationMs,
-                avgHr = result.summary.avgHr,
-                maxHr = result.summary.maxHr,
-                timeInTargetMs = result.summary.timeInTargetMs,
-                avgHrr60 = ivs.mapNotNull { it.hrr60 }.takeIf { it.isNotEmpty() }?.average(),
-                avgWorkHr = ivs.mapNotNull { it.avgHr }.takeIf { it.isNotEmpty() }?.average(),
-                workPctInZone = ivs.takeIf { it.isNotEmpty() }?.map { it.pctInZone }?.average(),
-                driftPct = result.summary.driftPct,
-                sparkline = bucketHr(result, step),
-                hrMaxUsed = result.setup.hrMax,
-            )
-        }
-
-        private const val SPARK_POINTS = 48
-    }
-}
-
 data class CompareStat(
     val label: String,
     val value: String,
-    val unit: String?,
     val delta: String,
     val trend: Trend,
-    val previous: String,
 )
 
+enum class TrendKind(val tab: String) { RECOVERY("Recovery"), IN_ZONE("In zone"), DRIFT("Drift") }
+
 data class TrendCard(
+    val kind: TrendKind,
     val title: String,
     val headline: String,
     val unit: String,
@@ -393,8 +348,6 @@ data class TrendCard(
     val currentAvg: Float?,
 )
 
-data class PersonalBest(val label: String, val value: String, val unit: String?, val note: String)
-
 data class SessionListRow(
     val id: String,
     val title: String,
@@ -404,22 +357,20 @@ data class SessionListRow(
     val inZone: String,
     val mode: SessionMode,
     val sparkline: List<Int?>,
+    val complete: Boolean,
 )
 
 data class ProgressOverview(
     val periodText: String,
+    /** Two tiles: sessions and time in zone, this window vs the one before. */
     val compare: List<CompareStat>,
     val calendar: List<List<CalendarDay>>,
     val consistencyText: String,
-    val activeDays: Int,
-    val streakWeeks: Int,
-    val hrr: TrendCard,
-    val zone: TrendCard,
-    /** (day index, % in zone) per 4x4 session, for the bar chart. */
-    val zoneBars: List<Pair<Float, Float>>,
-    val drift: TrendCard,
-    val bests: List<PersonalBest>,
-    val sessions: List<SessionListRow>,
+    /** Recovery, In zone, Drift: one chart card with a selector. */
+    val trends: List<TrendCard>,
+    /** The most recent sessions (Progress shows these, "Show all" the rest). */
+    val recent: List<SessionListRow>,
+    val totalSessions: Int,
     val totalDays: Int,
     val splitDay: Int,
 )
@@ -451,44 +402,68 @@ private fun hoursMinutes(ms: Long): String {
     return if (totalMin >= 60) "${totalMin / 60}h ${totalMin % 60}m" else "${totalMin}m"
 }
 
+/** The rows of the session lists, newest first. */
+fun sessionRows(
+    sessions: List<SessionDigest>,
+    zone: ZoneId,
+): List<SessionListRow> =
+    sessions.sortedByDescending { it.startedAtEpochMs }.map { d ->
+        val t = Instant.ofEpochMilli(d.startedAtEpochMs).atZone(zone)
+        val pct = if (d.mode == SessionMode.INTERVAL_4X4) d.workPctInZone else d.timeInTargetMs * 100.0 / d.durationMs.coerceAtLeast(1)
+        SessionListRow(
+            id = d.id,
+            title = if (d.mode == SessionMode.INTERVAL_4X4) "4×4 intervals" else "Easy run",
+            date = DATE_TIME.format(t),
+            duration = formatDuration(d.durationMs),
+            avgHr = d.avgHr?.toString() ?: DASH,
+            inZone = if (d.complete && pct != null) "${pct.roundToInt()} %" else DASH,
+            mode = d.mode,
+            sparkline = d.sparkline,
+            complete = d.complete,
+        )
+    }
+
 /**
- * Progress page: the last [windowDays] days against the [windowDays] before, a calendar of
- * the whole period, trend charts, personal bests and the session list (newest first).
+ * Progress page: the last [windowDays] days against the [windowDays] before (two tiles, a
+ * calendar and three trends over the whole period), plus the most recent sessions.
+ *
+ * @param window every finished session of the last 2 x [windowDays] days.
+ * @param recent the most recent sessions (any age) for the list.
+ * @param totalSessions how many finished sessions exist in all ("Show all N").
  */
 fun progressOverview(
-    sessions: List<SessionDigest>,
+    window: List<SessionDigest>,
+    recent: List<SessionDigest>,
+    totalSessions: Int,
     today: LocalDate,
     zone: ZoneId,
-    hrMax: Int,
-    hrMaxLearned: Boolean,
-    windowDays: Int = 21,
+    windowDays: Int = AppConstants.PROGRESS_WINDOW_DAYS,
 ): ProgressOverview {
     val totalDays = windowDays * 2
     val firstDay = today.minusDays(totalDays - 1L)
-    fun dayIndex(d: SessionDigest) = ChronoUnit.DAYS.between(firstDay, Instant.ofEpochMilli(d.startedAtEpochMs).atZone(zone).toLocalDate()).toInt()
-    val inPeriod = sessions.filter { dayIndex(it) in 0 until totalDays }.sortedBy { it.startedAtEpochMs }
+    fun dateOf(d: SessionDigest) = Instant.ofEpochMilli(d.startedAtEpochMs).atZone(zone).toLocalDate()
+    fun dayIndex(d: SessionDigest) = ChronoUnit.DAYS.between(firstDay, dateOf(d)).toInt()
+    val inPeriod = window.filter { dayIndex(it) in 0 until totalDays }.sortedBy { it.startedAtEpochMs }
     val (prev, cur) = inPeriod.partition { dayIndex(it) < windowDays }
 
     fun compare(
         label: String,
-        unit: String?,
         f: (List<SessionDigest>) -> Double,
         fmt: (Double) -> String,
     ): CompareStat {
         val c = f(cur)
         val p = f(prev)
-        return CompareStat(label, fmt(c), unit, pctDelta(c, p), trendOf(c, p, higherIsBetter = true, flatWithin = p * 0.03), "prev ${fmt(p)}")
+        return CompareStat(label, fmt(c), pctDelta(c, p), trendOf(c, p, higherIsBetter = true, flatWithin = p * 0.03))
     }
     val compare =
         listOf(
-            compare("Sessions", null, { it.size.toDouble() }, { it.toInt().toString() }),
-            compare("Training", null, { l -> l.sumOf { it.durationMs }.toDouble() }, { hoursMinutes(it.toLong()) }),
-            compare("In zone", null, { l -> l.sumOf { it.timeInTargetMs }.toDouble() }, { hoursMinutes(it.toLong()) }),
+            compare("Sessions", { it.size.toDouble() }, { it.toInt().toString() }),
+            compare("Time in zone", { l -> l.sumOf { it.timeInTargetMs }.toDouble() }, { hoursMinutes(it.toLong()) }),
         )
 
     // Calendar: the last totalDays / 7 weeks, Monday..Sunday, oldest week first.
     val calStart = today.with(DayOfWeek.MONDAY).minusWeeks(totalDays / 7 - 1L)
-    val byDay = inPeriod.groupBy { Instant.ofEpochMilli(it.startedAtEpochMs).atZone(zone).toLocalDate() }
+    val byDay = inPeriod.groupBy { dateOf(it) }
     val weeks = mutableListOf<List<CalendarDay>>()
     var weekStart = calStart
     while (!weekStart.isAfter(today)) {
@@ -506,26 +481,26 @@ fun progressOverview(
             }
         weekStart = weekStart.plusWeeks(1)
     }
-    val activeDays = inPeriod.map { Instant.ofEpochMilli(it.startedAtEpochMs).atZone(zone).toLocalDate() }.toSet()
-    // Consecutive weeks (ending this week) with at least two sessions.
+    val activeDays = inPeriod.map { dateOf(it) }.toSet()
+    // Consecutive weeks (ending this week) with at least two sessions; this week counts with one.
     var streak = 0
     var ws = today.with(DayOfWeek.MONDAY)
-    while (true) {
-        val n = inPeriod.count { val d = Instant.ofEpochMilli(it.startedAtEpochMs).atZone(zone).toLocalDate(); !d.isBefore(ws) && d.isBefore(ws.plusWeeks(1)) }
+    while (!ws.isBefore(firstDay.minusWeeks(1))) {
+        val n = inPeriod.count { val d = dateOf(it); !d.isBefore(ws) && d.isBefore(ws.plusWeeks(1)) }
         if (n >= 2 || (ws == today.with(DayOfWeek.MONDAY) && n >= 1)) streak++ else break
         ws = ws.minusWeeks(1)
-        if (ws.isBefore(firstDay.minusWeeks(1))) break
     }
-    val consistency = "${activeDays.size} training days in ${totalDays / 7} weeks · $streak-week streak"
+    val consistency = "${activeDays.size} training days\nin ${totalDays / 7} weeks\n\n$streak-week streak"
 
-    val fours = inPeriod.filter { it.mode == SessionMode.INTERVAL_4X4 }
-    val easies = inPeriod.filter { it.mode == SessionMode.EASY }
+    val fours = inPeriod.filter { it.mode == SessionMode.INTERVAL_4X4 && it.complete }
+    val easies = inPeriod.filter { it.mode == SessionMode.EASY && it.complete }
     fun avg(
         l: List<SessionDigest>,
         f: (SessionDigest) -> Double?,
     ) = l.mapNotNull(f).takeIf { it.isNotEmpty() }?.average()
 
     fun trendCard(
+        kind: TrendKind,
         title: String,
         unit: String,
         list: List<SessionDigest>,
@@ -536,60 +511,34 @@ fun progressOverview(
     ): TrendCard {
         val c = avg(list.filter { dayIndex(it) >= windowDays }, f)
         val p = avg(list.filter { dayIndex(it) < windowDays }, f)
-        val delta = if (c != null && p != null) fmt(abs(c - p)) + " $unit" else null
         return TrendCard(
+            kind = kind,
             title = title,
-            headline = c?.let(fmt) ?: "–",
+            headline = c?.let(fmt) ?: DASH,
             unit = unit,
             caption = caption,
-            delta = delta,
+            delta = if (c != null && p != null) fmt(abs(c - p)) + " $unit" else null,
             trend = if (c != null && p != null) trendOf(c, p, higherIsBetter, flatWithin = abs(p) * 0.02) else Trend.FLAT,
             points = list.mapNotNull { d -> f(d)?.let { TrendPoint(dayIndex(d) + 0.5f, it.toFloat()) } },
             previousAvg = p?.toFloat(),
             currentAvg = c?.toFloat(),
         )
     }
-    val hrr = trendCard("Recovery · HRR60", "bpm", fours, true, "HR drop 60 s after each work interval. Higher = fitter.", { it.avgHrr60 }, { it.roundToInt().toString() })
-    val zoneCard = trendCard("Time in zone · 4×4", "%", fours, true, "Share of work time at 85–95 % HRmax.", { it.workPctInZone }, { it.roundToInt().toString() })
-    val drift = trendCard("Cardiac drift · easy", "%", easies, false, "HR rise from first to second half. Lower = fitter base.", { it.driftPct }, { String.format(Locale.ROOT, "%.1f", it) })
-
-    val bestHrr = sessions.filter { it.avgHrr60 != null }.maxByOrNull { it.avgHrr60!! }
-    val bestZone = sessions.maxByOrNull { it.timeInTargetMs }
-    val bests =
-        listOfNotNull(
-            bestHrr?.let { PersonalBest("Best HRR60", it.avgHrr60!!.roundToInt().toString(), "bpm", SHORT_DATE.format(Instant.ofEpochMilli(it.startedAtEpochMs).atZone(zone))) },
-            bestZone?.let { PersonalBest("Most in zone", formatDuration(it.timeInTargetMs), null, SHORT_DATE.format(Instant.ofEpochMilli(it.startedAtEpochMs).atZone(zone))) },
-            PersonalBest("HRmax", hrMax.toString(), "bpm", if (hrMaxLearned) "learned" else "estimated"),
+    val trends =
+        listOf(
+            trendCard(TrendKind.RECOVERY, "Recovery · HRR60", "bpm", fours, true, "HR drop 60 s after each work interval. Higher = fitter.", { it.avgHrr60 }, { it.roundToInt().toString() }),
+            trendCard(TrendKind.IN_ZONE, "Time in zone · 4×4", "%", fours, true, "Share of work time in the work zone.", { it.workPctInZone }, { it.roundToInt().toString() }),
+            trendCard(TrendKind.DRIFT, "Cardiac drift · easy", "%", easies, false, "HR rise from first to second half. Lower = fitter base.", { it.driftPct }, { String.format(Locale.ROOT, "%.1f", it) }),
         )
 
-    val rows =
-        sessions.sortedByDescending { it.startedAtEpochMs }.map { d ->
-            val t = Instant.ofEpochMilli(d.startedAtEpochMs).atZone(zone)
-            val base = if (d.mode == SessionMode.INTERVAL_4X4) d.workPctInZone else d.timeInTargetMs * 100.0 / d.durationMs.coerceAtLeast(1)
-            SessionListRow(
-                id = d.id,
-                title = if (d.mode == SessionMode.INTERVAL_4X4) "4×4 intervals" else "Easy run",
-                date = DATE_TIME.format(t),
-                duration = formatDuration(d.durationMs),
-                avgHr = d.avgHr?.toString() ?: "–",
-                inZone = base?.let { "${it.roundToInt()} %" } ?: "–",
-                mode = d.mode,
-                sparkline = d.sparkline,
-            )
-        }
     return ProgressOverview(
-        periodText = "Last 3 weeks vs the 3 before",
+        periodText = "Last ${windowDays / 7} weeks vs the ${windowDays / 7} before",
         compare = compare,
         calendar = weeks,
         consistencyText = consistency,
-        activeDays = activeDays.size,
-        streakWeeks = streak,
-        hrr = hrr,
-        zone = zoneCard,
-        zoneBars = fours.mapNotNull { d -> d.workPctInZone?.let { dayIndex(d).toFloat() to it.toFloat() } },
-        drift = drift,
-        bests = bests,
-        sessions = rows,
+        trends = trends,
+        recent = sessionRows(recent, zone),
+        totalSessions = totalSessions,
         totalDays = totalDays,
         splitDay = windowDays,
     )

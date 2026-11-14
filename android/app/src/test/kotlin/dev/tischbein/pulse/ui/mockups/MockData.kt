@@ -13,7 +13,7 @@ import dev.tischbein.pulse.sensor.DeviceStatus
 import dev.tischbein.pulse.sensor.HeartRateSample
 import dev.tischbein.pulse.sensor.sim.SimProfile
 import dev.tischbein.pulse.sensor.sim.SimulatedHeartModel
-import dev.tischbein.pulse.ui.SessionDigest
+import dev.tischbein.pulse.data.SessionDigest
 import java.time.LocalDate
 import java.time.LocalTime
 import java.time.ZoneId

@@ -1,13 +1,13 @@
 package dev.tischbein.pulse.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -23,7 +23,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -44,15 +43,21 @@ import dev.tischbein.pulse.ui.theme.Pulse
 import dev.tischbein.pulse.ui.theme.PulseType
 
 /**
- * Post-session summary / session detail, stateless. The HR graph is the centerpiece; above
- * it the share of time in zone as the one hero number, below it the per-interval table.
+ * Post-session summary and session detail, stateless. One hero number (time in zone), at most
+ * three numbers under it, then the HR graph and (4x4) the per-interval table.
+ *
+ * @param justFinished true right after a session (Done button), false when opened from the
+ *   history (back arrow).
  */
 @Composable
 fun SessionDetailContent(
     d: SessionDetail,
     modifier: Modifier = Modifier,
     scrollable: Boolean = true,
+    justFinished: Boolean = true,
+    onBack: () -> Unit = {},
     onDone: () -> Unit = {},
+    onDelete: () -> Unit = {},
 ) {
     Column(
         modifier
@@ -62,28 +67,25 @@ fun SessionDetailContent(
             .padding(horizontal = ScreenPadding, vertical = 16.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
+        if (!justFinished) BackRow(onBack)
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Overline(d.subtitle)
                 Spacer(Modifier.height(4.dp))
                 Text(d.title, fontFamily = InterDisplay, fontWeight = FontWeight.Bold, fontSize = 30.sp, color = Pulse.text)
             }
-            Tag(if (d.mode == SessionMode.INTERVAL_4X4) "Complete" else "Done", color = Pulse.accent)
+            if (!d.complete) Tag("Incomplete", color = Pulse.warning)
         }
 
-        // Hero: time in zone, then the three basics.
+        // Hero: time in zone, then three basics.
         PulseCard {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Overline(if (d.mode == SessionMode.INTERVAL_4X4) "Work time in zone" else "Time in zone")
-                    ValueUnit("${d.inZonePct}", "%", PulseType.hero.copy(fontSize = 64.sp, lineHeight = 70.sp), Pulse.inZone.accent, unitSize = 26.sp, unitColor = Pulse.inZone.accent)
-                    Text(d.inZoneText, fontFamily = InterText, fontSize = 13.sp, color = Pulse.textMid)
-                }
-                Column(verticalArrangement = Arrangement.spacedBy(14.dp), modifier = Modifier.width(118.dp)) {
-                    d.side.forEach { Stat(it.label, it.value, unit = it.unit) }
-                }
+            Overline(if (d.mode == SessionMode.INTERVAL_4X4) "Work time in zone" else "Time in zone")
+            Row(verticalAlignment = Alignment.Bottom) {
+                ValueUnit("${d.inZonePct}", "%", PulseType.hero.copy(fontSize = 64.sp, lineHeight = 70.sp), Pulse.inZone.accent, unitSize = 26.sp, unitColor = Pulse.inZone.accent)
+                Spacer(Modifier.width(12.dp))
+                Text(d.inZoneText, fontFamily = InterText, fontSize = 13.sp, color = Pulse.textMid, modifier = Modifier.padding(bottom = 12.dp))
             }
-            Spacer(Modifier.height(18.dp))
+            Spacer(Modifier.height(14.dp))
             RowDivider()
             Spacer(Modifier.height(16.dp))
             Row {
@@ -104,10 +106,7 @@ fun SessionDetailContent(
 
         // The graph.
         PulseCard(padding = PaddingValues(start = 16.dp, end = 12.dp, top = 16.dp, bottom = 12.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("Heart rate", fontFamily = InterText, fontWeight = FontWeight.SemiBold, fontSize = 16.sp, color = Pulse.text, modifier = Modifier.weight(1f))
-                Legend(if (d.mode == SessionMode.INTERVAL_4X4) Pulse.inZone.accent else Pulse.below.accent, "target zone")
-            }
+            Text("Heart rate", fontFamily = InterText, fontWeight = FontWeight.SemiBold, fontSize = 16.sp, color = Pulse.text)
             Spacer(Modifier.height(10.dp))
             SessionHrChart(d.hr, d.stepSec, d.bands, Modifier.fillMaxWidth().height(230.dp), yMin = d.yMin, yMax = d.yMax)
             d.gapsText?.let {
@@ -123,22 +122,33 @@ fun SessionDetailContent(
         if (d.intervals.isNotEmpty()) IntervalTable(d)
 
         Spacer(Modifier.height(4.dp))
-        PillButton("Done", Modifier.fillMaxWidth(), height = 56.dp, onClick = onDone)
+        if (justFinished) PillButton("Done", Modifier.fillMaxWidth(), height = 56.dp, onClick = onDone)
+        Text(
+            "Delete session",
+            fontFamily = InterText,
+            fontWeight = FontWeight.SemiBold,
+            fontSize = 14.sp,
+            color = Pulse.danger,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).clickable(onClick = onDelete).padding(vertical = 12.dp),
+        )
     }
 }
 
+/** "‹ Back" at the top of a secondary screen. */
 @Composable
-private fun Legend(
-    color: Color,
-    text: String,
+fun BackRow(
+    onBack: () -> Unit,
+    label: String = "Back",
 ) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Box(Modifier.size(width = 14.dp, height = 8.dp).clip(RoundedCornerShape(2.dp)).background(color.copy(alpha = 0.35f)))
-        Spacer(Modifier.width(6.dp))
-        Text(text, fontFamily = InterText, fontSize = 12.sp, color = Pulse.textLow)
+    Row(
+        Modifier.clip(CircleShape).clickable(onClick = onBack).padding(start = 2.dp, end = 12.dp, top = 6.dp, bottom = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text("‹", fontFamily = InterText, fontSize = 26.sp, color = Pulse.textMid, modifier = Modifier.padding(end = 6.dp, bottom = 3.dp))
+        Text(label, fontFamily = InterText, fontWeight = FontWeight.Medium, fontSize = 15.sp, color = Pulse.textMid)
     }
 }
-
 
 @Composable
 private fun IntervalTable(d: SessionDetail) {
@@ -172,7 +182,7 @@ private fun IntervalTable(d: SessionDetail) {
                     Text(row.pctInZone, style = PulseType.smallNumber.copy(fontSize = 13.sp), color = Pulse.text, modifier = Modifier.width(40.dp), textAlign = TextAlign.End)
                 }
                 Text(
-                    if (row.hrr60 == "--") "–" else row.hrr60,
+                    row.hrr60,
                     style = PulseType.number.copy(fontSize = 18.sp),
                     color = Pulse.text,
                     modifier = Modifier.weight(1f).padding(start = 10.dp),

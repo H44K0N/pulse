@@ -5,7 +5,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
@@ -18,10 +17,10 @@ import dev.tischbein.pulse.ui.theme.Pulse
 
 /*
  * The handful of line icons the app needs, drawn on a 24-unit grid. Drawing them avoids the
- * material-icons dependency (several MB) for eight glyphs, and keeps one consistent stroke.
+ * material-icons dependency (several MB) for four glyphs, and keeps one consistent stroke.
  */
 
-enum class PulseIcon { TRAIN, PROGRESS, SETTINGS, HEART, BATTERY, SIGNAL, PAUSE, PLAY }
+enum class PulseIcon { TRAIN, PROGRESS, SETTINGS, HEART }
 
 @Composable
 fun Icon(
@@ -64,37 +63,6 @@ fun Icon(
                 }
             }
             PulseIcon.HEART -> drawPath(heartPath(u), tint)
-            PulseIcon.BATTERY -> {
-                drawRoundRect(tint, p(2f, 7f), Size(18f * u, 10f * u), androidx.compose.ui.geometry.CornerRadius(2.5f * u), style = stroke)
-                drawLine(tint, p(22.5f, 10.5f), p(22.5f, 13.5f), stroke.width, StrokeCap.Round)
-                drawRoundRect(tint, p(4.5f, 9.5f), Size(13f * u, 5f * u), androidx.compose.ui.geometry.CornerRadius(1f * u))
-            }
-            PulseIcon.SIGNAL -> {
-                // Electrode contact: a small ECG blip.
-                val path = Path().apply {
-                    moveTo(2f * u, 13f * u)
-                    lineTo(7f * u, 13f * u)
-                    lineTo(9.5f * u, 6f * u)
-                    lineTo(13f * u, 19f * u)
-                    lineTo(15.5f * u, 11f * u)
-                    lineTo(17f * u, 13f * u)
-                    lineTo(22f * u, 13f * u)
-                }
-                drawPath(path, tint, style = stroke)
-            }
-            PulseIcon.PAUSE -> {
-                drawLine(tint, p(8.5f, 5f), p(8.5f, 19f), 3f * u, StrokeCap.Round)
-                drawLine(tint, p(15.5f, 5f), p(15.5f, 19f), 3f * u, StrokeCap.Round)
-            }
-            PulseIcon.PLAY -> {
-                val path = Path().apply {
-                    moveTo(7f * u, 4.5f * u)
-                    lineTo(19.5f * u, 12f * u)
-                    lineTo(7f * u, 19.5f * u)
-                    close()
-                }
-                drawPath(path, tint)
-            }
         }
     }
 }

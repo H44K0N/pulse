@@ -1,6 +1,5 @@
 package dev.tischbein.pulse.ui.mockups
 
-import androidx.compose.foundation.ScrollState
 import androidx.compose.runtime.Composable
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.fillMaxSize
@@ -12,11 +11,13 @@ import com.github.takahirom.roborazzi.captureRoboImage
 import dev.tischbein.pulse.coaching.SessionMode
 import dev.tischbein.pulse.sensor.ConnectionState
 import dev.tischbein.pulse.sensor.sim.SimProfile
+import dev.tischbein.pulse.ui.AllSessionsContent
 import dev.tischbein.pulse.ui.LiveContent
 import dev.tischbein.pulse.ui.ProgressContent
 import dev.tischbein.pulse.ui.SessionDetailContent
-import dev.tischbein.pulse.ui.SessionDigest
+import dev.tischbein.pulse.data.SessionDigest
 import dev.tischbein.pulse.ui.SettingsContent
+import dev.tischbein.pulse.ui.SettingsSection
 import dev.tischbein.pulse.ui.TrainContent
 import dev.tischbein.pulse.ui.MainFrame
 import dev.tischbein.pulse.ui.design.Destination
@@ -24,6 +25,7 @@ import dev.tischbein.pulse.ui.liveDashboard
 import dev.tischbein.pulse.ui.liveDriftPct
 import dev.tischbein.pulse.ui.progressOverview
 import dev.tischbein.pulse.ui.sessionDetail
+import dev.tischbein.pulse.ui.sessionRows
 import dev.tischbein.pulse.ui.theme.PulseTheme
 import dev.tischbein.pulse.voice.VoiceStatus
 import org.junit.Assume.assumeTrue
@@ -36,11 +38,9 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 import java.io.File
-import java.time.format.DateTimeFormatter
-import java.util.Locale
 
 /**
- * Design mockups of the Milestone 4 redesign, rendered on the JVM (Robolectric native
+ * Screenshots of the real screens (the stateless *Content composables the app uses), rendered on the JVM (Robolectric native
  * graphics + Roborazzi) at a modern phone size: 411 x 914 dp at 420 dpi = 1079 x 2399 px.
  * Data comes from the real coaching engine fed by the simulator profiles and a synthetic
  * six-week history (MockData).
@@ -75,6 +75,8 @@ class DesignMockups {
         atSec: Int,
         device: dev.tischbein.pulse.sensor.DeviceStatus = MockData.device,
         easyTargetMs: Long? = null,
+        showGraph: Boolean = false,
+        endHold: Float = 0f,
     ) {
         val state = run.states[atSec - 1]
         val (last, ago) = run.lastValid(atSec)
@@ -90,7 +92,7 @@ class DesignMockups {
                 lastValidHr = last,
                 msSinceLastValid = ago,
             )
-        shot(name) { LiveContent(d) }
+        shot(name) { LiveContent(d, showGraph = showGraph, endHoldProgress = endHold) }
     }
 
     /** Work 2 starts at 600 + 420 = 1020 s; 2:10 into it, comfortably in zone. */
@@ -133,6 +135,14 @@ class DesignMockups {
     @Test
     fun a06_liveEasy() = live("06-live-easy", MockData.simRun(SimProfile.EASY_WITH_DRIFT, untilSec = 31 * 60, easyTargetMin = 45), 31 * 60, easyTargetMs = 45 * 60_000L)
 
+    /** The last-2-minutes graph, opened by tapping the HR. */
+    @Test
+    fun a18_liveGraphOpen() = live("18-live-graph-open", MockData.simRun(SimProfile.GOOD_4X4, untilSec = 1150), 1150, showGraph = true)
+
+    /** End held for about 60 % of the hold time: the fill sweeps across. */
+    @Test
+    fun a19_liveEndHolding() = live("19-live-end-holding", MockData.simRun(SimProfile.GOOD_4X4, untilSec = 1150), 1150, endHold = 0.6f)
+
     // ---- Summary ------------------------------------------------------------------------
 
     private val todayStart = MockData.epochAt(MockData.today, 17, 32)
@@ -161,7 +171,8 @@ class DesignMockups {
                 if (t in 1_140_000L until 1_160_000L) null else v
             }
         val d = sessionDetail(run.result, todayStart - 3 * 86_400_000L, MockData.zone)
-        shot("09-summary-fading-dropout-full") { SessionDetailContent(d, scrollable = false) }
+        // Opened from the history: Back instead of Done.
+        shot("09-summary-fading-dropout-full") { SessionDetailContent(d, scrollable = false, justFinished = false) }
     }
 
     @Test
@@ -176,7 +187,8 @@ class DesignMockups {
     private fun overview(): dev.tischbein.pulse.ui.ProgressOverview {
         val history = MockData.history().map { it.first }
         val todaySession = SessionDigest.of("today", MockData.simRun(SimProfile.GOOD_4X4).result, todayStart)
-        return progressOverview(history + todaySession, MockData.today, MockData.zone, MockData.HR_MAX, hrMaxLearned = true)
+        val all = history + todaySession
+        return progressOverview(all, all.sortedByDescending { it.startedAtEpochMs }.take(8), all.size, MockData.today, MockData.zone)
     }
 
     @Test
@@ -189,41 +201,45 @@ class DesignMockups {
     @Config(qualifiers = "+h2700dp")
     fun c12_progressFull() {
         val p = overview()
-        shot("12-progress-full") { FullPage(Destination.PROGRESS) { ProgressContent(p, scrollable = false) } }
+        shot("12-progress-full") { FullPage(Destination.PROGRESS) { ProgressContent(p, scrollable = false, initialCalendarOpen = true) } }
     }
 
+    /** "Show all": every session. */
     @Test
     fun c13_progressSessions() {
-        val p = overview()
-        shot("13-progress-sessions") { MainFrame(Destination.PROGRESS) { m -> ProgressContent(p, m, scrollState = ScrollState(Int.MAX_VALUE / 2)) } }
+        val history = MockData.history().map { it.first }
+        val todaySession = SessionDigest.of("today", MockData.simRun(SimProfile.GOOD_4X4).result, todayStart)
+        val rows = sessionRows(history + todaySession, MockData.zone)
+        shot("13-progress-sessions") { AllSessionsContent(rows) }
     }
 
     // ---- Train / Settings ---------------------------------------------------------------
 
-    private val todayText = DateTimeFormatter.ofPattern("EEEE d MMMM", Locale.ENGLISH).format(MockData.today)
-
     @Test
-    fun d14_train4x4() {
-        val last = overview().sessions.getOrNull(1)
+    fun d14_train4x4() =
         shot("14-train-4x4") {
-            MainFrame(Destination.TRAIN) { m -> TrainContent(MockData.settings, MockData.device, SessionMode.INTERVAL_4X4, todayText, last, m) }
+            MainFrame(Destination.TRAIN) { m -> TrainContent(MockData.settings, MockData.device, SessionMode.INTERVAL_4X4, m) }
         }
-    }
 
+    /** Easy mode with the plan details opened (target duration stepper). */
     @Test
-    fun d15_trainEasy() {
-        val last = overview().sessions.getOrNull(1)
+    fun d15_trainEasy() =
         shot("15-train-easy") {
-            MainFrame(Destination.TRAIN) { m -> TrainContent(MockData.settings, MockData.device, SessionMode.EASY, todayText, last, m) }
+            MainFrame(Destination.TRAIN) { m -> TrainContent(MockData.settings, MockData.device, SessionMode.EASY, m, initialPlanOpen = true) }
         }
-    }
 
     @Test
     fun d16_settings() = shot("16-settings") { MainFrame(Destination.SETTINGS) { m -> SettingsContent(MockData.settings, m) } }
 
+    /** Every group opened, simulator on. */
     @Test
-    @Config(qualifiers = "+h1700dp")
-    fun d17_settingsFull() = shot("17-settings-full") { FullPage(Destination.SETTINGS) { SettingsContent(MockData.settings, scrollable = false) } }
+    @Config(qualifiers = "+h2200dp")
+    fun d17_settingsFull() =
+        shot("17-settings-full") {
+            FullPage(Destination.SETTINGS) {
+                SettingsContent(MockData.settings.copy(simulatorEnabled = true, serverUrl = "https://pulse.example.com", apiToken = "not-a-real-token"), scrollable = false, initialOpen = SettingsSection.entries.toSet())
+            }
+        }
 
     /** Whole page, content then the bottom bar, on a tall canvas (trimmed afterwards). */
     @Composable
@@ -248,6 +264,7 @@ class DesignMockups {
             listOf(
                 "01-live-work-in-zone", "02-live-below-zone-ramp", "03-live-above-zone", "04-live-sensor-lost", "05-live-paused", "06-live-easy",
                 "07-summary-4x4", "10-summary-easy", "11-progress", "13-progress-sessions", "14-train-4x4", "16-settings",
+                "18-live-graph-open", "19-live-end-holding", "15-train-easy",
             ),
             File(DIR, "00-contact-sheet.png"),
         )

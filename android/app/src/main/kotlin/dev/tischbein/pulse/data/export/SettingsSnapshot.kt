@@ -1,6 +1,7 @@
 package dev.tischbein.pulse.data.export
 
 import dev.tischbein.pulse.coaching.CoachingConfig
+import dev.tischbein.pulse.coaching.SessionMode
 import dev.tischbein.pulse.coaching.SessionSetup
 import dev.tischbein.pulse.coaching.ZonePercent
 import kotlinx.serialization.SerialName
@@ -29,7 +30,39 @@ data class SettingsSnapshot(
 ) {
     fun toJson(): String = SessionJson.format.encodeToString(serializer(), this)
 
+    /**
+     * The engine configuration this session ran with (for the detail screen of a stored
+     * session). Values that are not in the snapshot keep the CoachingConfig defaults.
+     */
+    fun toConfig(): CoachingConfig {
+        val base = CoachingConfig()
+        fun List<Double>.zone() = ZonePercent(this[0], this[1])
+        return base.copy(
+            fourByFour =
+                base.fourByFour.copy(
+                    warmupMs = warmupMs,
+                    workMs = workMs,
+                    recoveryMs = recoveryMs,
+                    cooldownMs = cooldownMs,
+                    intervalCount = intervalCount,
+                    warmupZone = warmupZone.zone(),
+                    workZone = workZone.zone(),
+                    recoveryZone = recoveryZone.zone(),
+                    cooldownZone = cooldownZone.zone(),
+                ),
+            easy = base.easy.copy(zone = easyZone.zone()),
+        )
+    }
+
+    fun toSetup(
+        mode: SessionMode,
+        hrMax: Int,
+    ) = SessionSetup(mode, hrMax, easyTargetDurationMs.takeIf { mode == SessionMode.EASY })
+
     companion object {
+        /** Null if the stored text cannot be read (then the caller falls back to defaults). */
+        fun parse(json: String): SettingsSnapshot? = runCatching { SessionJson.format.decodeFromString(serializer(), json) }.getOrNull()
+
         fun of(setup: SessionSetup, config: CoachingConfig, age: Int, hrMaxLearned: Boolean): SettingsSnapshot {
             val p = config.fourByFour
             fun ZonePercent.pair() = listOf(low, high)

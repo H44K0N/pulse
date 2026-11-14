@@ -1,6 +1,33 @@
 package dev.tischbein.pulse.ui.design
 
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.graphics.compositeOver
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.onLongClick
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
+import dev.tischbein.pulse.AppConstants
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -206,14 +233,15 @@ fun PillButton(
     color: Color = Pulse.accent,
     height: Dp = 64.dp,
     subtitle: String? = null,
+    enabled: Boolean = true,
     onClick: () -> Unit = {},
 ) {
     Column(
         modifier
             .height(height)
             .clip(CircleShape)
-            .background(if (primary) color else Pulse.surfaceRaised)
-            .clickable(onClick = onClick),
+            .background(if (primary) color.copy(alpha = if (enabled) 1f else 0.3f) else Pulse.surfaceRaised)
+            .clickable(enabled = enabled, onClick = onClick),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
@@ -286,9 +314,10 @@ fun Segmented(
     options: List<String>,
     selected: Int,
     modifier: Modifier = Modifier,
+    background: Color = Pulse.surface,
     onSelect: (Int) -> Unit = {},
 ) {
-    Row(modifier.clip(CircleShape).background(Pulse.surface).padding(4.dp)) {
+    Row(modifier.clip(CircleShape).background(background).padding(4.dp)) {
         options.forEachIndexed { i, label ->
             val on = i == selected
             Box(
@@ -343,3 +372,76 @@ fun BottomBar(
         }
     }
 }
+
+/**
+ * End button that needs a hold of [AppConstants.HOLD_TO_END_MS], so a sweaty hand brushing the
+ * screen cannot stop the workout (no confirm dialog: that is one more thing to read mid-run).
+ * While held, a red fill sweeps across, the button grows a little and warms up; letting go
+ * early rewinds it. A quick tap only says "Keep holding". TalkBack: a long-press action.
+ *
+ * @param previewProgress draws the button part-way through a hold (screenshots only).
+ */
+@Composable
+fun HoldToEndButton(
+    onEnd: () -> Unit,
+    modifier: Modifier = Modifier,
+    height: Dp = 64.dp,
+    previewProgress: Float = 0f,
+) {
+    val progress = remember { Animatable(previewProgress) }
+    val scope = rememberCoroutineScope()
+    val haptics = LocalHapticFeedback.current
+    val currentOnEnd by rememberUpdatedState(onEnd)
+    var hint by remember { mutableStateOf(false) }
+    LaunchedEffect(hint) {
+        if (hint) {
+            delay(HINT_VISIBLE_MS)
+            hint = false
+        }
+    }
+    val p = progress.value
+    Box(
+        modifier
+            .height(height)
+            .graphicsLayer {
+                scaleX = 1f + 0.05f * p
+                scaleY = 1f + 0.05f * p
+            }.clip(CircleShape)
+            .background(lerp(Pulse.surfaceRaised, Pulse.danger.copy(alpha = 0.22f).compositeOver(Pulse.bg), p))
+            .pointerInput(Unit) {
+                awaitEachGesture {
+                    awaitFirstDown()
+                    val hold =
+                        scope.launch {
+                            val remaining = ((1f - progress.value) * AppConstants.HOLD_TO_END_MS).toInt()
+                            progress.animateTo(1f, tween(remaining, easing = LinearEasing))
+                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                            currentOnEnd()
+                        }
+                    waitForUpOrCancellation()
+                    if (progress.value < 1f) {
+                        hold.cancel()
+                        if (progress.value < HINT_BELOW) hint = true
+                        scope.launch { progress.animateTo(0f, tween(REWIND_MS)) }
+                    }
+                }
+            }.semantics(mergeDescendants = true) {
+                role = Role.Button
+                onLongClick(label = "End session") {
+                    currentOnEnd()
+                    true
+                }
+            },
+        contentAlignment = Alignment.Center,
+    ) {
+        Box(Modifier.align(Alignment.CenterStart).fillMaxHeight().fillMaxWidth(p).background(Pulse.danger.copy(alpha = 0.45f)))
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text("End", fontFamily = InterText, fontWeight = FontWeight.Bold, fontSize = 19.sp, color = if (p > 0.5f) Pulse.text else Pulse.danger)
+            Text(if (hint) "Keep holding" else "hold", fontFamily = InterText, fontSize = 12.sp, color = Pulse.textMid)
+        }
+    }
+}
+
+private const val HINT_VISIBLE_MS = 2_500L
+private const val HINT_BELOW = 0.25f
+private const val REWIND_MS = 250

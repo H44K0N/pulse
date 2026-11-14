@@ -1,11 +1,8 @@
 package dev.tischbein.pulse.ui.design
 
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
@@ -460,42 +457,5 @@ fun PhaseTimeline(
         }
         drawCircle(Pulse.bg, size.height / 2f, Offset(markerX, cy))
         drawCircle(accent, size.height / 2f - 2.5.dp.toPx(), Offset(markerX, cy))
-    }
-}
-
-/**
- * A 270-degree gauge (open at the bottom) around [content]: phase progress on the live screen.
- */
-@Composable
-fun ProgressRing(
-    progress: Float,
-    color: Color,
-    modifier: Modifier = Modifier,
-    strokeWidth: Dp = 14.dp,
-    dashed: Boolean = false,
-    content: @Composable BoxScope.() -> Unit,
-) {
-    Box(modifier, contentAlignment = Alignment.Center) {
-        Canvas(Modifier.matchParentSize()) {
-            val sw = strokeWidth.toPx()
-            val d = min(size.width, size.height) - sw
-            val tl = Offset((size.width - d) / 2f, (size.height - d) / 2f)
-            val start = 135f
-            val sweep = 270f
-            val track =
-                if (dashed) {
-                    Stroke(sw / 3f, cap = StrokeCap.Round, pathEffect = PathEffect.dashPathEffect(floatArrayOf(2.dp.toPx(), 9.dp.toPx())))
-                } else {
-                    Stroke(sw, cap = StrokeCap.Round)
-                }
-            drawArc(Color.White.copy(alpha = if (dashed) 0.25f else 0.07f), start, sweep, false, tl, Size(d, d), style = track)
-            val p = progress.coerceIn(0f, 1f)
-            if (p > 0f && !dashed) {
-                // Soft glow under the arc, then the arc itself.
-                drawArc(color.copy(alpha = 0.18f), start, sweep * p, false, tl, Size(d, d), style = Stroke(sw * 2.2f, cap = StrokeCap.Round))
-                drawArc(color, start, sweep * p, false, tl, Size(d, d), style = Stroke(sw, cap = StrokeCap.Round))
-            }
-        }
-        content()
     }
 }
