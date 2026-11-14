@@ -23,6 +23,19 @@ cd android
   Google Play Services or Firebase.
 - The debug APK ends up in `android/app/build/outputs/apk/debug/app-debug.apk`.
 
+### Screen mockups
+
+The redesigned screens are rendered to PNG on the JVM (Robolectric + Roborazzi, no device),
+with data from the real coaching engine and the simulator:
+
+```sh
+./gradlew :app:recordRoborazziDebug --tests '*DesignMockups*'
+```
+
+Output: `android/app/src/test/screenshots/` (1079 x 2399 px, plus `00-contact-sheet.png`).
+A normal test run skips these. The UI font is Inter (SIL Open Font License,
+`android/app/licenses/Inter-OFL.txt`).
+
 ## Install and try it
 
 1. Install the APK (`adb install -r app-debug.apk`, or copy it to the phone and open it;

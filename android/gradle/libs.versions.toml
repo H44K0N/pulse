@@ -23,6 +23,12 @@
 #   - Polar BLE SDK: comes from JitPack only, see settings.gradle.kts for the lock-down.
 #   - Robolectric (tests only): runs Room against a real SQLite in JVM unit tests, since this
 #     project has no emulator/device to run instrumented tests on.
+#   - Roborazzi (tests only): renders Compose screens to PNG on the JVM, on top of the
+#     Robolectric we already have (its native graphics mode draws with the real Android
+#     Skia). Chosen over Paparazzi, which brings a second Android runtime (layoutlib), its
+#     own Gradle plugin and only an alpha line for AGP 9. 1.77.0 rather than the newest
+#     1.79.0: released more than two weeks ago. Screenshots are only recorded on demand
+#     (./gradlew :app:recordRoborazziDebug), never in a normal test run.
 [versions]
 agp = "9.3.3"
 kotlin = "2.4.21"
@@ -39,6 +45,7 @@ polar-ble-sdk = "8.6.0"
 junit = "4.13.2"
 robolectric = "4.18"
 androidx-test-core = "1.7.0"
+roborazzi = "1.77.0"
 
 [libraries]
 kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "coroutines" }
@@ -60,6 +67,8 @@ polar-ble-sdk = { module = "com.github.polarofficial:polar-ble-sdk", version.ref
 junit = { module = "junit:junit", version.ref = "junit" }
 robolectric = { module = "org.robolectric:robolectric", version.ref = "robolectric" }
 androidx-test-core = { module = "androidx.test:core", version.ref = "androidx-test-core" }
+roborazzi = { module = "io.github.takahirom.roborazzi:roborazzi", version.ref = "roborazzi" }
+roborazzi-compose = { module = "io.github.takahirom.roborazzi:roborazzi-compose", version.ref = "roborazzi" }
 
 [plugins]
 kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
@@ -72,3 +81,5 @@ ksp = { id = "com.google.devtools.ksp", version.ref = "ksp" }
 # Room's Gradle plugin: exports the database schema JSON to app/schemas (committed) so
 # future versions can write and test migrations.
 room = { id = "androidx.room", version.ref = "room" }
+# Adds recordRoborazziDebug / verifyRoborazziDebug and passes the record flag to the tests.
+roborazzi = { id = "io.github.takahirom.roborazzi", version.ref = "roborazzi" }
