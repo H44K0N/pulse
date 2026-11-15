@@ -7,10 +7,10 @@ import android.content.Intent
 import android.content.pm.PackageInfo
 import android.content.pm.PackageInstaller
 import android.content.pm.PackageManager
-import android.net.Uri
 import android.provider.Settings
 import android.util.Log
 import androidx.core.content.edit
+import androidx.core.net.toUri
 import dev.tischbein.pulse.PulseApplication
 import java.io.File
 import java.io.IOException
@@ -106,7 +106,7 @@ class AndroidUpdatePlatform(private val context: Context) : UpdatePlatform {
 
         /** Android's "Install unknown apps" page for Pulse. */
         fun unknownAppsSettings(context: Context): Intent =
-            Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:${context.packageName}"))
+            Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, "package:${context.packageName}".toUri())
 
         /** SHA-256 (hex) of the certificates the package is signed with now; empty when not readable. */
         fun signers(info: PackageInfo): Set<String> {
