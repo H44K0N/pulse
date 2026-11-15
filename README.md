@@ -4,7 +4,7 @@ Polar H10 interval coach for Android: connects to the strap, logs every session,
 and coaches 4x4 intervals and easy runs by voice. Sessions sync to a small
 self-hosted FastAPI backend.
 
-Version 0.5.0 (Milestone 5: finished sessions sync to the server). See `ARCHITECTURE.md` for how it fits together and
+Version 0.5.1 (Milestone 5: finished sessions sync to the server; the app updates itself from it). See `ARCHITECTURE.md` for how it fits together and
 `docs/session-format.md` for the session data contract.
 
 ## Build and test
@@ -112,6 +112,22 @@ Testing against a server on your computer (debug builds only, which also allow p
 to your own machine): run the server on port 8000, `adb reverse tcp:8000 tcp:8000`, and set
 the URL to `http://localhost:8000` (from the emulator: `http://10.0.2.2:8000`). Release
 builds refuse any `http://` URL.
+
+## Updates from inside the app
+
+With sync set up, Pulse asks your server for a newer build whenever it comes to the front
+(at most about once an hour; quietly nothing when offline). When there is one, Train shows
+one banner, "Update to 0.5.2" with the release note, and Settings shows the same under
+"Version 0.5.1". Tap **Update**: the first time Android asks once to allow "Install unknown
+apps" for Pulse (**Open settings**, switch it on, come back; Pulse carries on by itself).
+Pulse downloads the file from your server only, checks its size and SHA-256 against what the
+server stated, that it is Pulse, newer, and signed like the installed app, then hands it to
+Android's installer. Android may show its own confirmation; then Pulse closes and the new
+version is in place, with all sessions and settings kept.
+
+Never during a session: from the tap on Start until the session's service has stopped there
+is no banner, no download start and no install; while Android is installing, Start waits and
+says why. Publishing a build on the server: `server/DEPLOY.md`.
 
 ## Live screen and voice
 

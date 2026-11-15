@@ -83,6 +83,8 @@ class SessionService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        // While this service lives, a session is running or finishing: no update (SessionGate).
+        container.sessionGate.serviceAlive(true)
         notifications = SessionNotifications(this)
         notifications.ensureChannel()
     }
@@ -358,6 +360,7 @@ class SessionService : Service() {
         // Frees the TTS engine and audio focus (whatever was still queued is not said).
         voice?.shutdown()
         scope.cancel()
+        container.sessionGate.serviceAlive(false)
         super.onDestroy()
     }
 
@@ -374,15 +377,27 @@ class SessionService : Service() {
         /**
          * Starts a session. Call from the UI (the app must be in the foreground).
          * [easyTargetMin]: easy mode target in minutes, 0 = open-ended, null = Settings default.
+         * Returns false (nothing starts) while an update is being installed: Pulse is about to be
+         * replaced, which would end the session (Train says so under Start).
          */
         fun start(
             context: Context,
             mode: SessionMode,
             easyTargetMin: Int? = null,
-        ) {
+        ): Boolean {
+            val gate = (context.applicationContext as PulseApplication).container.sessionGate
+            if (!gate.tryStartSession()) return false
             val intent = Intent(context, SessionService::class.java).setAction(ACTION_START).putExtra(EXTRA_MODE, mode.name)
             easyTargetMin?.let { intent.putExtra(EXTRA_EASY_TARGET_MIN, it) }
-            ContextCompat.startForegroundService(context, intent)
+            try {
+                ContextCompat.startForegroundService(context, intent)
+            } catch (e: RuntimeException) {
+                // E.g. ForegroundServiceStartNotAllowedException: the service never comes up.
+                Log.e(TAG, "cannot start the session service", e)
+                gate.startFailed()
+                return false
+            }
+            return true
         }
     }
 }

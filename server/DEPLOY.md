@@ -66,3 +66,32 @@ sqlite3 /opt/pulse/data/pulse.db ".backup '/var/backups/pulse/pulse-$(date +%F).
 Run it from cron or a systemd timer and copy the files off the host. To
 restore: stop the container, replace `data/pulse.db` (and delete any
 `pulse.db-wal` / `pulse.db-shm`), `chown 10001:10001`, start it again.
+
+## 5. Publishing an app build
+
+The app updates itself from this server (`GET /api/app`, `GET /api/app/apk`,
+both behind the token). A build is published by putting two files into `apk/`
+next to the database (the directory of `PULSE_DB_PATH`, so `/data/apk/` in the
+container and `/opt/pulse/data/apk/` on the host):
+
+```sh
+sudo mkdir -p /opt/pulse/data/apk
+sudo cp app-debug.apk /opt/pulse/data/apk/pulse.apk.new
+sudo mv /opt/pulse/data/apk/pulse.apk.new /opt/pulse/data/apk/pulse.apk   # atomic replace
+echo '{"version_code": 6, "version_name": "0.5.1", "notes": "One sentence."}' \
+  | sudo tee /opt/pulse/data/apk/version.json
+sudo chown -R 10001:10001 /opt/pulse/data/apk
+```
+
+- `version_code` must be higher than the installed app's or nothing is offered;
+  the app never installs a lower or equal one, nor a file of another package or
+  signed with another key.
+- `size` and `sha256` are computed by the server from `pulse.apk` itself (cached,
+  recomputed when the file changes), so they cannot be stated wrongly.
+- Without these files, or with a `version.json` that is not valid, the server
+  answers `{"published": false}` and the app offers nothing. Nothing is created
+  at startup: deploying this server version changes nothing until a build is
+  published. To withdraw a build, delete `version.json`.
+- The download is sent with `Cache-Control: no-store`, so Cloudflare (which
+  caches `.apk` files by default) does not keep serving an old build.
+

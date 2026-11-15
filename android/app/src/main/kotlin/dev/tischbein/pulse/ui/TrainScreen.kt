@@ -1,5 +1,6 @@
 package dev.tischbein.pulse.ui
 
+import android.content.Context
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -30,6 +31,7 @@ import dev.tischbein.pulse.sensor.FoundDevice
 import dev.tischbein.pulse.session.SessionService
 import dev.tischbein.pulse.ui.theme.InterText
 import dev.tischbein.pulse.ui.theme.Pulse
+import dev.tischbein.pulse.update.AndroidUpdatePlatform
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
@@ -45,6 +47,8 @@ fun TrainScreen(
     var mode by rememberSaveable { mutableStateOf(SessionMode.INTERVAL_4X4) }
     var scanning by remember { mutableStateOf(false) }
     var notificationsOff by remember { mutableStateOf(!hasNotificationPermission(context)) }
+    val updateView by container.update.state.collectAsStateWithLifecycle()
+    val sessionRunning by container.sessionGate.running.collectAsStateWithLifecycle()
     LifecycleResumeEffect(Unit) {
         notificationsOff = !hasNotificationPermission(context)
         onPauseOrDispose { }
@@ -69,10 +73,23 @@ fun TrainScreen(
         // The easy target on Train IS the stored default: one value, remembered for next time.
         onEasyTargetMin = { min -> container.appScope.launch { container.settings.save(s.copy(easyTargetMin = min)) } },
         onFixNotifications = { openAppSettings(context) },
+        update = UpdateCard.of(updateView, sessionRunning),
+        updateActions = updateActions(container, context),
+        startBlocked = UpdateCard.startBlocked(updateView),
         onStart = { SessionService.start(context, mode) },
     )
     if (scanning) ScanDialog(container, onDismiss = { scanning = false })
 }
+
+/** Update / Try again, and "Open settings" for Android's "Install unknown apps" page for Pulse. */
+fun updateActions(
+    container: AppContainer,
+    context: Context,
+): UpdateActions =
+    UpdateActions(
+        onUpdate = { container.update.tap() },
+        onOpenSettings = { runCatching { context.startActivity(AndroidUpdatePlatform.unknownAppsSettings(context)) } },
+    )
 
 /** Lists H10 straps found while the dialog is open; tapping one remembers and connects it. */
 @Composable

@@ -1,5 +1,7 @@
 package dev.tischbein.pulse.ui
 
+import android.content.ActivityNotFoundException
+import android.content.Intent
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -12,6 +14,7 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarResult
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -53,6 +56,20 @@ fun PulseApp(container: AppContainer) {
     val active by container.activeSession.collectAsStateWithLifecycle()
     val finishedId by container.finishedSessionId.collectAsStateWithLifecycle()
     val device by container.sensors.status.collectAsStateWithLifecycle()
+    // The update's install needs Android's confirmation: launched while Pulse is visible (only
+    // then is this collected), never during a session (the update does not get that far then).
+    val confirm by container.update.confirm.collectAsStateWithLifecycle()
+    LaunchedEffect(confirm) {
+        val intent = confirm as? Intent ?: return@LaunchedEffect
+        try {
+            context.startActivity(intent)
+            container.update.confirmShown()
+        } catch (_: ActivityNotFoundException) {
+            container.update.confirmFailed()
+        } catch (_: SecurityException) {
+            container.update.confirmFailed()
+        }
+    }
     var tab by rememberSaveable { mutableStateOf(Destination.TRAIN) }
     val stack = rememberSaveable(saver = listSaver(save = { it.toList() }, restore = { it.toMutableStateList() })) { mutableStateListOf<String>() }
     val hidden = remember { mutableStateListOf<String>() }

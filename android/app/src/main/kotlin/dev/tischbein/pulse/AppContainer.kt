@@ -16,6 +16,12 @@ import dev.tischbein.pulse.sensor.SensorController
 import dev.tischbein.pulse.session.ActiveSession
 import dev.tischbein.pulse.time.ElapsedRealtimeClock
 import dev.tischbein.pulse.time.MillisClock
+import dev.tischbein.pulse.update.AndroidUpdatePlatform
+import dev.tischbein.pulse.update.HttpApkDownloader
+import dev.tischbein.pulse.update.HttpUpdateServer
+import dev.tischbein.pulse.update.PrefsUpdateMemory
+import dev.tischbein.pulse.update.SessionGate
+import dev.tischbein.pulse.update.UpdateController
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -51,6 +57,21 @@ class AppContainer(context: Context) {
     val uploader = SessionUploader(sessions, settings, syncClient, allowLocalHttp)
     private val syncScheduler = SyncScheduler(context)
 
+    // ---- In-app update (update/): from the same server, never during a session ----
+    /** A session is running or being set up; shared by Start and the update (see SessionGate). */
+    val sessionGate = SessionGate()
+    val update =
+        UpdateController(
+            scope = appScope,
+            io = Dispatchers.IO,
+            dir = java.io.File(context.noBackupFilesDir, "update"),
+            server = HttpUpdateServer({ settings.current() }, UrlConnectionHttp(), HttpApkDownloader(), allowLocalHttp),
+            platform = AndroidUpdatePlatform(context),
+            memory = PrefsUpdateMemory(context),
+            gate = sessionGate,
+            nowMs = clock::nowMs,
+        )
+
     /** The session the foreground service is running, or null. Set by SessionService. */
     val activeSession = MutableStateFlow<ActiveSession?>(null)
 
@@ -76,7 +97,10 @@ class AppContainer(context: Context) {
                 .map { ServerUrl.normalize(it.serverUrl) to it.apiToken }
                 .distinctUntilChanged()
                 .drop(1) // the value at start is not a change
-                .collect { requestSync(SyncTrigger.SETTINGS_CHANGED) }
+                .collect {
+                    requestSync(SyncTrigger.SETTINGS_CHANGED)
+                    update.onServerChanged()
+                }
         }
     }
 

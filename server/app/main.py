@@ -12,12 +12,12 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, Response
 from pydantic import ValidationError
 from starlette.concurrency import run_in_threadpool
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from . import db
+from . import db, release
 from .config import Settings, load_settings
 from .models import SessionIn
 
@@ -118,6 +118,9 @@ def _row_for(session: SessionIn, raw: str) -> dict:
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or load_settings()  # raises if the token is missing or weak
     db_path = settings.db_path
+    # The published app build (release.py). Only read on request: nothing is created here.
+    apk_dir = release.apk_dir_for(db_path)
+    apk_digest = release.FileDigest()
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
@@ -195,6 +198,30 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if doc is None:
             raise HTTPException(404, "Session not found")
         return Response(doc, media_type="application/json")
+
+    @api.get("/app")
+    def app_release() -> dict:
+        """The published app build for the in-app update, or `{"published": false}`.
+
+        `size` and `sha256` are computed from the file itself (cached until it changes).
+        """
+        found = release.current_release(apk_dir, apk_digest)
+        return found.as_json() if found else {"published": False}
+
+    @api.get("/app/apk")
+    def app_apk() -> FileResponse:
+        """The published APK, streamed from disk. `no-store`: a CDN must never keep an old build."""
+        found = release.current_release(apk_dir, apk_digest)
+        if found is None:
+            raise HTTPException(
+                404, "No app build is published", headers={"Cache-Control": "no-store"}
+            )
+        return FileResponse(
+            found.path,
+            media_type=release.APK_MEDIA_TYPE,
+            filename=release.APK_NAME,
+            headers={"Cache-Control": "no-store"},
+        )
 
     app.include_router(api)
     return app
