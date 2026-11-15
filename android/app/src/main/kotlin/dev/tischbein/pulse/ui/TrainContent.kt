@@ -78,6 +78,8 @@ fun MainFrame(
 /**
  * Train (home) screen, stateless: the strap (one line; details only when something is
  * wrong), the mode, a one-line plan (tap for details) and one big Start at the bottom.
+ * A newer Pulse on the server shows as one banner at the top ([update], see UpdateBanner);
+ * while that update is being installed Start waits and says why ([startBlocked]).
  */
 @Composable
 fun TrainContent(
@@ -91,16 +93,21 @@ fun TrainContent(
     onStrap: () -> Unit = {},
     onEasyTargetMin: (Int) -> Unit = {},
     onFixNotifications: () -> Unit = {},
+    update: UpdateCardUi? = null,
+    updateActions: UpdateActions = UpdateActions(),
+    startBlocked: String? = null,
     onStart: () -> Unit = {},
 ) {
     var planOpen by rememberSaveable { mutableStateOf(initialPlanOpen) }
-    val canStart = device.simulatorProfile != null || device.deviceId != null
+    val hasSource = device.simulatorProfile != null || device.deviceId != null
+    val canStart = hasSource && startBlocked == null
     Column(modifier.fillMaxSize().padding(horizontal = ScreenPadding, vertical = 16.dp)) {
         Column(
             Modifier.weight(1f).verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             Text("Train", fontFamily = InterDisplay, fontWeight = FontWeight.Bold, fontSize = 30.sp, color = Pulse.text)
+            update?.let { UpdateBanner(it, updateActions) }
             StrapCard(device, onStrap)
             if (notificationsOff) {
                 Notice("Notifications are off, so the session notification (heart rate, Pause/End) is hidden.", "Turn on", onFixNotifications)
@@ -115,7 +122,7 @@ fun TrainContent(
         Spacer(Modifier.height(14.dp))
         if (!canStart) {
             Text(
-                "Connect your strap first (or turn on the simulator in Settings › Developer).",
+                startBlocked ?: "Connect your strap first (or turn on the simulator in Settings › Developer).",
                 fontFamily = InterText,
                 fontSize = 13.sp,
                 color = Pulse.textLow,

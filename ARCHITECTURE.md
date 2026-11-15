@@ -43,6 +43,16 @@ flowchart LR
   ends, app start, URL/token edited (after 20 s, so a half-typed URL never gets the token),
   "Sync now". `ServerUrl` decides which URLs are allowed (HTTPS; `http://localhost` only in
   debug builds), matching `res/xml/network_security_config.xml`.
+- **In-app update** (`update/`): `UpdateController` asks the server (`HttpUpdateServer`,
+  `GET /api/app` with the sync URL and token) when the app comes to the front, at most hourly;
+  after the tap on Update it downloads `/api/app/apk` (`HttpApkDownloader`: no redirects,
+  token only to the configured server), checks size and SHA-256 (`UpdateRules`), then the
+  package, versionCode and signer (`AndroidUpdatePlatform`), and commits a `PackageInstaller`
+  session; `UpdateStatusReceiver` brings Android's answer back. `SessionGate` is the one lock
+  between Start and the install: no banner, download start or install while a session runs or
+  is being set up, and Start waits while an install is with Android. Decisions are JVM-tested
+  behind interfaces (`UpdateRulesTest`, `UpdateControllerTest`, `HttpUpdateServerTest`);
+  `UpdateE2ETest` runs against a real server when `PULSE_E2E_URL`/`PULSE_E2E_TOKEN` are set.
 - **History**: each `sessions` row carries a digest (avg/max HR, time in zone, HRR60,
   drift, a 48-point sparkline) written when the session is saved, so Progress and the lists
   never read samples. The detail screen loads one session and rebuilds its `SessionResult`.
@@ -63,6 +73,7 @@ flowchart LR
 | Change the database | entity in `data/db/Entities.kt`, bump the version in `PulseDatabase.kt`, add a migration in `Migrations.kt`, test it in `MigrationTest`, commit the new `app/schemas/.../N.json` |
 | Change sync timing (timeouts, backoff, settle delay) | `android/app/.../AppConstants.kt` (Sync section) |
 | Change what a server answer means (retry vs give up) | `data/sync/SyncClient.kt` (and `SyncClientTest`) |
+| Change when or how often the app looks for an update | `android/app/.../AppConstants.kt` (In-app update section), `update/UpdateRules.kt` |
 | Change the upload format | `docs/session-format.md`, `data/export/SessionDocument.kt`, the server's `models.py` |
 
 ## Checks

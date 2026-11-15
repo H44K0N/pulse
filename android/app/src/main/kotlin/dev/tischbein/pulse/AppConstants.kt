@@ -1,6 +1,7 @@
 package dev.tischbein.pulse
 
 import dev.tischbein.pulse.coaching.MS_PER_HOUR
+import dev.tischbein.pulse.coaching.MS_PER_MINUTE
 import dev.tischbein.pulse.coaching.MS_PER_SECOND
 
 /*
@@ -74,4 +75,19 @@ object AppConstants {
 
     /** At most this much of a rejection reason is stored with the session and shown. */
     const val SYNC_MAX_ERROR_CHARS: Int = 300
+
+    // ---- In-app update (update/) -------------------------------------------------------
+
+    /** The server is asked for a newer build when Pulse comes to the front, at most this often. */
+    const val UPDATE_CHECK_INTERVAL_MS: Long = MS_PER_HOUR
+
+    /** After a failed check (offline, server down) the next try waits at least this long. */
+    const val UPDATE_RETRY_AFTER_FAILURE_MS: Long = 5 * MS_PER_MINUTE
+
+    /**
+     * An install handed to Android that never reports back (its dialog left unanswered) is
+     * abandoned after this long, so Start is never blocked for good. Long enough for Android to
+     * install a large build without his confirmation.
+     */
+    const val UPDATE_INSTALL_TIMEOUT_MS: Long = 3 * MS_PER_MINUTE
 }

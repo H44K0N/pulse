@@ -58,6 +58,8 @@ fun SettingsScreen(
     val syncOn = stored?.syncConfigured() == true
     val zone = remember { ZoneId.systemDefault() }
     val sync = remember(syncOn, overview) { syncPanel(syncOn, overview, System.currentTimeMillis(), zone) }
+    val updateView by container.update.state.collectAsStateWithLifecycle()
+    val sessionRunning by container.sessionGate.running.collectAsStateWithLifecycle()
 
     fun save(s: AppSettings) {
         container.appScope.launch {
@@ -115,6 +117,8 @@ fun SettingsScreen(
             }
         },
         onSyncNow = { container.syncNow() },
+        update = UpdateCard.of(updateView, sessionRunning),
+        updateActions = updateActions(container, context),
     )
     if (scanning) ScanDialog(container, onDismiss = { scanning = false })
 }

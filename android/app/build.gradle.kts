@@ -32,8 +32,8 @@ android {
         // real phone and strap. Then bump it and read the "behavior changes: apps targeting
         // Android 17" page.
         targetSdk = 36
-        versionCode = 5
-        versionName = "0.5.0"
+        versionCode = 6
+        versionName = "0.5.1"
     }
 
     buildTypes {
@@ -59,6 +59,17 @@ android {
     testOptions {
         // Robolectric needs the merged Android resources/manifest in JVM unit tests.
         unitTests.isIncludeAndroidResources = true
+    }
+
+    packaging {
+        // Dex files and native libraries are stored compressed in the APK instead of stored
+        // uncompressed (AGP's default for minSdk 28+). That shrinks the debug APK from about
+        // 43 MB to about 17 MB, which matters now that the app downloads its own updates and
+        // builds are passed around as files. Cost: Android extracts the native libraries and
+        // optimises the dex at install time, so the installed app takes somewhat more storage
+        // and the install takes a little longer; nothing changes at runtime.
+        dex { useLegacyPackaging = true }
+        jniLibs { useLegacyPackaging = true }
     }
 
     lint {

@@ -28,6 +28,13 @@ class MainActivity : ComponentActivity() {
         if (hasBluetoothPermissions(this)) container.appScope.launch { container.sensors.autoConnect() }
     }
 
+    override fun onResume() {
+        super.onResume()
+        // Update check (at most hourly, never during a session, quiet when offline), and the
+        // update carries on by itself when he comes back from "Install unknown apps" with it allowed.
+        container.update.onForeground()
+    }
+
     override fun onStop() {
         super.onStop()
         // Not visible and no session: let go of the strap (its battery and ours). During a

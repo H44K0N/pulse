@@ -39,6 +39,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -75,7 +76,8 @@ enum class SettingsSection { WORKOUT, SYNC, DEVELOPER }
  * limits in AppSettings, so most values cannot be invalid; the server URL is checked as typed.
  *
  * Most used on top (heart rate, strap); the rest in collapsed groups: Workout (protocol and
- * zones), Sync (server, see [SyncPanel]), Developer (simulator).
+ * zones), Sync (server, see [SyncPanel]), Developer (simulator). At the very bottom one quiet
+ * line with the version, and the update card when the server has a newer one ([update]).
  */
 @Composable
 fun SettingsContent(
@@ -93,6 +95,9 @@ fun SettingsContent(
     onFixBattery: () -> Unit = {},
     onTestConnection: () -> Unit = {},
     onSyncNow: () -> Unit = {},
+    version: String = BuildConfig.VERSION_NAME,
+    update: UpdateCardUi? = null,
+    updateActions: UpdateActions = UpdateActions(),
 ) {
     var open by rememberSaveable { mutableStateOf(initialOpen.map { it.name }.toSet()) }
     fun toggle(section: SettingsSection) {
@@ -179,6 +184,18 @@ fun SettingsContent(
         ) {
             DeveloperSettings(s, onChange)
         }
+        update?.let {
+            Spacer(Modifier.height(6.dp))
+            UpdateBanner(it, updateActions)
+        }
+        Text(
+            "Version $version",
+            fontFamily = InterText,
+            fontSize = 13.sp,
+            color = Pulse.textLow,
+            modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
+            textAlign = TextAlign.Center,
+        )
     }
 }
 
